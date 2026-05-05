@@ -6,18 +6,12 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=/scratch.hpc/pietro.tellarini2/FlowStitch/logs/dataset_%j.out
 #SBATCH --error=/scratch.hpc/pietro.tellarini2/FlowStitch/logs/dataset_%j.err
+#SBATCH --chdir=/scratch.hpc/pietro.tellarini2/FlowStitch
 
-# Spostati nella cartella di lavoro
-cd /scratch.hpc/pietro.tellarini2/FlowStitch
-
-# Crea logs
-mkdir -p logs
-
-# Variabile base di Hugging Face
+# Variable
 export HF_HOME="/scratch.hpc/pietro.tellarini2/huggingface_cache"
 export DIFFUSERS_NO_FLASH_ATTN=1
 
-# Attiva l'ambiente virtuale
-
-# Lancia il generatore
+# Python
+source /scratch.hpc/pietro.tellarini2/.venv/bin/activate
 python dataset_generator.py

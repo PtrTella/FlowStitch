@@ -150,12 +150,16 @@ def main():
     os.makedirs(CONFIG["output_root"], exist_ok=True)
     
     logger.info(f"Caricamento {CONFIG['model_id']} in VRAM...")
-    pipe = FluxPipeline.from_pretrained(
-        CONFIG["model_id"],
-        torch_dtype=CONFIG["dtype"],
-        cache_dir=CONFIG["cache_dir"],
-        local_files_only=True # Assicurati di averlo già scaricato
-    ).to(CONFIG["device"])
+    try:
+        pipe = FluxPipeline.from_pretrained(
+            CONFIG["model_id"],
+            torch_dtype=CONFIG["dtype"],
+            cache_dir=CONFIG["cache_dir"],
+            # Rimuoviamo local_files_only per evitare crash se manca un meta-file
+        ).to(CONFIG["device"])
+    except Exception as e:
+        logger.error(f"[FATAL] Errore nel caricamento del modello: {e}")
+        return # Se non carica il modello, è inutile continuare
     
     capturer = FluxDataCapturer(pipe.transformer, CONFIG["target_layers"])
     capturer.attach()
@@ -167,55 +171,63 @@ def main():
         
         logger.info(f"--- Processando: '{prompt}' ---")
         capturer.reset()
-        
         generator = torch.Generator(device="cpu").manual_seed(CONFIG["seed"])
         
-        # Generazione (fa scattare gli hook)
-        output = pipe(
-            prompt=prompt,
-            num_inference_steps=CONFIG["steps"],
-            generator=generator,
-            output_type="pil"
-        )
-        
-        # Salvataggio Immagine
-        output.images[0].save(os.path.join(path, "final_image.png"))
-        
-        # Validazione e Salvataggio Tensori
-        if capturer.x0 is not None and capturer.v0 is not None:
-            torch.save(capturer.x0, os.path.join(path, "x0_noise.pt"))
-            torch.save(capturer.v0, os.path.join(path, "v0_velocity.pt"))
+        # RETE DI SALVATAGGIO: Se un prompt esplode, non muore l'intero script
+        try:
+            # Generazione (fa scattare gli hook)
+            output = pipe(
+                prompt=prompt,
+                num_inference_steps=CONFIG["steps"],
+                generator=generator,
+                output_type="pil"
+            )
             
-            # LA MAGIA DEL FLOW MATCHING
-            x_pred = capturer.x0 + capturer.v0
-            torch.save(x_pred, os.path.join(path, "x_pred.pt"))
+            # Salvataggio Immagine
+            output.images[0].save(os.path.join(path, "final_image.png"))
             
-            # Salvataggio Mappe Attenzione
-            if capturer.attn_maps:
-                torch.save(capturer.attn_maps, os.path.join(path, "attention_maps.pt"))
-            
-            # Metadati
-            metadata = {
-                "prompt": prompt,
-                "seed": CONFIG["seed"],
-                "model": CONFIG["model_id"],
-                "steps": CONFIG["steps"],
-                "layers_captured": list(capturer.attn_maps.keys()),
-                "math_proof": "x_pred = x0 + v0 computed successfully"
-            }
-            with open(os.path.join(path, "metadata.json"), "w") as f:
-                json.dump(metadata, f, indent=4)
+            # Validazione e Salvataggio Tensori
+            if capturer.x0 is not None and capturer.v0 is not None:
+                torch.save(capturer.x0, os.path.join(path, "x0_noise.pt"))
+                torch.save(capturer.v0, os.path.join(path, "v0_velocity.pt"))
                 
-            logger.info(f"[SUCCESS] Dati matematici e mappe salvati in {path}")
-        else:
-            logger.error(f"[ERROR] Hook fallito per il prompt: {prompt}")
-        
-        # Pulizia VRAM tra un prompt e l'altro
-        torch.cuda.empty_cache()
+                # LA MAGIA DEL FLOW MATCHING
+                x_pred = capturer.x0 + capturer.v0
+                torch.save(x_pred, os.path.join(path, "x_pred.pt"))
+                
+                # Salvataggio Mappe Attenzione
+                if capturer.attn_maps:
+                    torch.save(capturer.attn_maps, os.path.join(path, "attention_maps.pt"))
+                
+                # Metadati
+                metadata = {
+                    "prompt": prompt,
+                    "seed": CONFIG["seed"],
+                    "model": CONFIG["model_id"],
+                    "steps": CONFIG["steps"],
+                    "layers_captured": list(capturer.attn_maps.keys()),
+                    "math_proof": "x_pred = x0 + v0 computed successfully"
+                }
+                with open(os.path.join(path, "metadata.json"), "w") as f:
+                    json.dump(metadata, f, indent=4)
+                    
+                logger.info(f"[SUCCESS] Dati matematici e mappe salvati in {path}")
+            else:
+                logger.error(f"[ERROR] Hook non scattato per: {prompt}")
+
+        except Exception as e:
+            # Se la generazione o il salvataggio falliscono, logga l'errore ma CONTINUA
+            logger.error(f"[CRASH PROMPT] Errore imprevisto su '{prompt}': {e}")
+            logger.info("Pulisco la VRAM e passo al prossimo prompt...")
+            
+        finally:
+            # Questo blocco viene eseguito SEMPRE, sia che vada bene, sia che fallisca
+            # Svuotiamo la cache di PyTorch per evitare OOM (Out Of Memory) a valanga
+            torch.cuda.empty_cache()
 
     # Ripuliamo il modello prima di chiudere
     capturer.remove()
-    logger.info("Generazione Dataset completata con successo!")
+    logger.info("Generazione Dataset completata!")
 
 if __name__ == "__main__":
     main()

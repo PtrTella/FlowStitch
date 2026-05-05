@@ -15,11 +15,9 @@ mkdir -p logs
 
 # Variabile base di Hugging Face
 export HF_HOME="/scratch.hpc/pietro.tellarini2/huggingface_cache"
-
-# LA VARIABILE DELLA DISCORDIA (Se fallisce l'attenzione, togli il commento a questa riga)
 export DIFFUSERS_NO_FLASH_ATTN=1
 
 # Attiva l'ambiente virtuale
 
 # Lancia il generatore
-python flux_dataset_generator.py
+python dataset_generator.py

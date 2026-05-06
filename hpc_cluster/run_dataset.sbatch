@@ -4,8 +4,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48G
 #SBATCH --time=02:00:00
-#SBATCH --output=/scratch.hpc/pietro.tellarini2/FlowStitch/logs/dataset_%j.out
-#SBATCH --error=/scratch.hpc/pietro.tellarini2/FlowStitch/logs/dataset_%j.err
+#SBATCH --output=/scratch.hpc/pietro.tellarini2/FlowStitch/hpc_cluster/logs/dataset.out
+#SBATCH --error=/scratch.hpc/pietro.tellarini2/FlowStitch/hpc_cluster/logs/dataset.err
 #SBATCH --chdir=/scratch.hpc/pietro.tellarini2/FlowStitch
 
 # Variable
@@ -15,4 +15,4 @@ export PYTHONUNBUFFERED=1
 
 # Python
 source /scratch.hpc/pietro.tellarini2/.venv/bin/activate
-python dataset_generator.py
+python hpc_cluster/flux_dataset_generator.py

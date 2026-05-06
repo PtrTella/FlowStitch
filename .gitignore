@@ -1,16 +1,20 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-.DS_Store
-.python-version
-uv.lock
-pyproject.toml
-*logs/*
+# Data
+data/
+*.tar.gz
+*.pt
 *.png
+!test_flux_2080_success.png
+
+# Logs
+**/logs/
+*.out
+*.err
+
+# Python
+__pycache__/
+venv*/
+.venv*/
+.env
+
+# Jupyter
+.ipynb_checkpoints

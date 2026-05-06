@@ -10,13 +10,12 @@ from typing import List
 # Modifica solo questa sezione per i tuoi esperimenti
 CONFIG = {
     "model_id": "black-forest-labs/FLUX.1-schnell",
-    "cache_dir": "/scratch.hpc/pietro.tellarini2/huggingface_cache",
-    "output_root": "/scratch.hpc/pietro.tellarini2/dataset_v1",
+    "output_root": "data/dataset_v1", 
     "device": "cuda",
     "dtype": torch.bfloat16,
     "seed": 42,
     "steps": 4,
-    "target_layers": [0, 10] # Quali blocchi Transformer spiare per la Cross-Attention
+    "target_layers": [0, 10]
 }
 
 PROMPTS = [
@@ -191,8 +190,6 @@ def main():
         pipe = FluxPipeline.from_pretrained(
             CONFIG["model_id"],
             torch_dtype=CONFIG["dtype"],
-            cache_dir=CONFIG["cache_dir"],
-            # Rimuoviamo local_files_only per evitare crash se manca un meta-file
         ).to(CONFIG["device"])
     except Exception as e:
         logger.error(f"[FATAL] Errore nel caricamento del modello: {e}")

@@ -3,9 +3,6 @@ import torch
 from diffusers import FluxPipeline, FluxTransformer2DModel
 from transformers import T5EncoderModel, BitsAndBytesConfig
 
-# 1. Forza il risparmio memoria massimo
-os.environ["DIFFUSERS_NO_FLASH_ATTN"] = "1"
-
 model_id = "black-forest-labs/FLUX.1-schnell"
 
 try:

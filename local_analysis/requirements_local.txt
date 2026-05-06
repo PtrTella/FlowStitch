@@ -1,0 +1,8 @@
+torch
+jupyter
+matplotlib
+seaborn
+numpy
+transformers
+pillow
+ipykernel

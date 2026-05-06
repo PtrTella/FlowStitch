@@ -1,3 +1,5 @@
+# PyTorch versione CPU (Per non appesantire il portatile)
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
 jupyter
 matplotlib

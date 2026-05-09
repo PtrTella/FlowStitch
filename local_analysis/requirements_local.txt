@@ -8,3 +8,6 @@ numpy
 transformers
 pillow
 ipykernel
+transformers 
+sentencepiece
+protobuf

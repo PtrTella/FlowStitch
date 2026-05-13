@@ -21,3 +21,4 @@ venv*/
 
 # Mac 
 .DStore
+.DS_Store

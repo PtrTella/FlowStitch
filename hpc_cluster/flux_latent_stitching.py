@@ -2,180 +2,147 @@ import os
 import json
 import torch
 import logging
-import traceback
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter
 from diffusers import FluxPipeline
 from transformers import T5Tokenizer
 
-# Importiamo le classi di hook già sviluppate per l'estrazione dati
-from flux_dataset_generator import FluxDataCapturer, AttnProcessorWrapper
-
-# --- CONFIGURAZIONE ---
+# =============================================================================
+# CONFIGURAZIONE SPERIMENTALE - STRADA B (FLOW PERTURBATION)
+# =============================================================================
 CONFIG = {
-    "model_id": "black-forest-labs/FLUX.1-schnell",
-    "output_dir": "data/stitching_experiment",
-    "device": "cuda" if torch.cuda.is_available() else "cpu",
+    "model_id": "black-forest-labs/FLUX.1-schnell", # Usiamo Schnell per coerenza col DB a 4 step
+    "db_path": "data/dataset_v1/a_blue_sphere",     # La "banca del seme" topologica del nostro oggetto
+    "output_dir": "data/stitching_results",         # Dove salveremo la prova del teorema
+    "ambient_prompt": "a crystal clear lake",       # L'universo ospite (Il tessuto fluido)
+    "word_to_isolate": "sphere",                    # Il concetto semantico da estrarre
+    "lambda_val": 1.0,                              # Moltiplicatore di Lagrange (Forza dell'Iniezione)
+    "device": "cuda",
     "dtype": torch.bfloat16,
-    "seed": 42,
-    "steps": 4,
-    "source_prompt": "a glowing neon sphere",
-    "target_prompt": "a calm mirror lake at night",
-    # La parola o le parole da fondere (per estrarre la maschera)
-    "source_target_words": ["glowing", "neon", "sphere"] 
+    "lake_seed": 1337                               # Un seed fisso per il lago, giusto per riproducibilità
 }
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-def get_token_indices(tokenizer, prompt, target_words):
-    """Trova gli indici dei token corrispondenti alle parole target."""
-    tokens = tokenizer.encode(prompt)
-    target_indices = []
-    
-    # Metodo euristico semplice per trovare i token
-    # (T5 aggiunge spesso ' ' davanti alle parole)
-    for i, token_id in enumerate(tokens):
-        decoded = tokenizer.decode([token_id]).strip().lower()
-        for word in target_words:
-            if decoded in word.lower() and decoded != "":
-                target_indices.append(i)
-                break
-    
-    if not target_indices:
-        logger.warning(f"Nessun token trovato per le parole {target_words}. Uso i primi 10 token testuali.")
-        target_indices = list(range(1, 10))
-    return target_indices
-
-def create_hard_mask(cross_attn, target_indices):
-    """Trasforma la cross-attention grezza in una Hard Mask topologica."""
-    # cross_attn: [1, 24, 4096, 512]
-    attn_mean = cross_attn.mean(dim=1).squeeze(0) # [4096, 512]
-    
-    # 1. Semantic Fusion
-    attn_map = attn_mean[:, target_indices].sum(dim=1) # [4096]
-    
-    # 2. Reshape & Normalization
-    attn_map = attn_map.view(64, 64).numpy()
-    attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
-    
-    # 3. Gaussian Smoothing
-    blurred = gaussian_filter(attn_map, sigma=1.5)
-    
-    # 4. Binarization
-    mask_2d = (blurred > 0.25).astype(np.float32)
-    
-    # Prepariamola per il tensore latente FLUX [1, 4096, 1]
-    mask_flat = mask_2d.flatten()
-    mask_tensor = torch.tensor(mask_flat, dtype=CONFIG["dtype"], device=CONFIG["device"])
-    mask_tensor = mask_tensor.unsqueeze(0).unsqueeze(-1) # [1, 4096, 1]
-    
-    return mask_2d, mask_tensor
 
 def main():
     os.makedirs(CONFIG["output_dir"], exist_ok=True)
-    logger.info(f"Avvio esperimento FlowStitch. Output dir: {CONFIG['output_dir']}")
     
-    # 1. Caricamento Modelli
-    pipe = FluxPipeline.from_pretrained(
-        CONFIG["model_id"],
-        torch_dtype=CONFIG["dtype"],
-    ).to(CONFIG["device"])
+    logger.info("Caricamento del Motore Differenziale (FLUX) e Tokenizer...")
+    pipe = FluxPipeline.frompretrained(CONFIG["model_id"], torch_dtype=CONFIG["dtype"]).to(CONFIG["device"])
+    pipe.set_progress_bar_config(disable=True)
+    tokenizer = T5Tokenizer.from_pretrained("google/t5-v1_1-xxl")
     
-    tokenizer = T5Tokenizer.from_pretrained(CONFIG["model_id"], subfolder="tokenizer_2")
+    # =========================================================================
+    # FASE 1: ESTRAZIONE GENETICA DAL VECTOR DB (Topologia Pura)
+    # =========================================================================
+    logger.info(f"Apertura del Vector DB: {CONFIG['db_path']}")
     
-    generator = torch.Generator(device=CONFIG["device"]).manual_seed(CONFIG["seed"])
+    # Leggiamo il prompt originario che ha generato il campo vettoriale isolato
+    with open(os.path.join(CONFIG["db_path"], "metadata.json"), "r") as f:
+        metadata = json.load(f)
+    target_prompt = metadata["prompt"]
     
-    # Variabili per memorizzare i dati intermedi
-    storage = {
-        "source_latent_step1": None,
-        "mask_tensor": None,
-        "mask_2d": None
-    }
+    # 1A. COSTRUZIONE DELL'ATTRATTORE SEMANTICO (A_target)
+    # Carichiamo la mappa di attenzione fluida generata nel "vuoto termodinamico".
+    # Questa mappa è perfetta perché non è inquinata da elementi di background.
+    attn_target = torch.load(os.path.join(CONFIG["db_path"], "attention_maps.pt"), map_location="cpu")
+    layer_10 = attn_target['layer_10'] # Tensore spaziale [1, 24, 4096, 512]
     
-    # --- FASE 1: GENERAZIONE SORGENTE E ESTRAZIONE MASCHERA ---
-    logger.info(f"Fase 1: Generazione Sorgente -> '{CONFIG['source_prompt']}'")
-    capturer = FluxDataCapturer(pipe.transformer, [10])
-    capturer.attach()
-    capturer.reset()
-    
-    def source_callback(pipe, step_index, timestep, callback_kwargs):
-        if step_index == 0:
-            storage["source_latent_step1"] = callback_kwargs["latents"].detach().clone()
-            logger.info("   -> Latente Sorgente allo Step 1 catturato.")
-        return callback_kwargs
-
-    source_image = pipe(
-        prompt=CONFIG["source_prompt"],
-        num_inference_steps=CONFIG["steps"],
-        generator=generator,
-        callback_on_step_end=source_callback,
-        output_type="pil"
-    ).images[0]
-    source_image.save(os.path.join(CONFIG["output_dir"], "01_source_pure.png"))
-    capturer.remove() # Sganciamo l'estrattore di attenzione
-    
-    # Estrazione Maschera
-    if "layer_10" in capturer.attn_maps:
-        target_indices = get_token_indices(tokenizer, CONFIG["source_prompt"], CONFIG["source_target_words"])
-        logger.info(f"   -> Calcolo maschera sui token indici: {target_indices}")
-        mask_2d, mask_tensor = create_hard_mask(capturer.attn_maps["layer_10"], target_indices)
-        storage["mask_2d"] = mask_2d
-        storage["mask_tensor"] = mask_tensor
+    # Risoluzione del conflitto del Tokenizer: cerchiamo tutti i sub-token
+    # che compongono la parola (es. "sphere" -> "_sp", "here")
+    tokens = tokenizer(target_prompt, return_tensors="pt").input_ids[0]
+    token_indices = []
+    for i, token in enumerate(tokens):
+        decoded_token = tokenizer.decode([token]).strip().lower()
+        if decoded_token in CONFIG["word_to_isolate"] and len(decoded_token) > 0:
+            token_indices.append(i)
+            
+    if not token_indices:
+        raise ValueError(f"Anomalia: Parola '{CONFIG['word_to_isolate']}' non trovata.")
         
-        # Salvataggio visuale maschera
-        plt.imsave(os.path.join(CONFIG["output_dir"], "02_extracted_mask.png"), mask_2d, cmap='gray')
-    else:
-        logger.error("Mappa di attenzione non trovata. Impossibile procedere.")
-        return
+    # Sommiamo l'energia topologica di tutti i sub-token appartenenti all'oggetto
+    attn_maps_list = [layer_10[0, :, :, idx].mean(dim=0) for idx in token_indices]
+    attn_map = torch.clamp(torch.stack(attn_maps_list).sum(dim=0), min=0.0, max=1.0).to(CONFIG["device"], dtype=CONFIG["dtype"])
+    
+    # Normalizzazione in probabilità pura [0,1] e Reshape Vettoriale.
+    # Diventa [1, 4096, 1] per permettere il broadcasting automatico sui 64 canali dei latenti.
+    attn_min, attn_max = attn_map.min(), attn_map.max()
+    A_target = (attn_map - attn_min) / (attn_max - attn_min + 1e-8)
+    A_target = A_target.unsqueeze(0).unsqueeze(-1)
+    
+    # 1B. CARICAMENTO DELLA FORZA FISICA (v0_target)
+    # Estraiamo le traiettorie ideali dell'oggetto. Come dimostrato nel Cap. 2, 
+    # la natura dell'oggetto si definisce a t=0.
+    v0_target = torch.load(os.path.join(CONFIG["db_path"], "v0_velocity.pt")).to(CONFIG["device"], dtype=CONFIG["dtype"])
+    
+    # [ATTENZIONE METODOLOGICA]: NON carichiamo x0_noise.pt! 
+    # Vogliamo che la sfera nasca dal tessuto quantistico del lago, assorbendone la luce.
+
+    # =========================================================================
+    # FASE 2: PREPARAZIONE DELL'UNIVERSO OSPITE (Il Lago)
+    # =========================================================================
+    logger.info(f"Inizializzazione ambiente: '{CONFIG['ambient_prompt']}'")
+    ambient_embeds, ambient_pooled, ambient_txt_ids = pipe.encode_prompt(
+        prompt=CONFIG["ambient_prompt"], prompt_2=None
+    )
+    
+    # Creiamo un tessuto quantistico (rumore) totalmente nuovo e vergine.
+    generator = torch.Generator(device=CONFIG["device"]).manual_seed(CONFIG["lake_seed"])
+    latents, latent_image_ids = pipe.prepare_latents(
+        1, pipe.transformer.config.in_channels // 4, 1024, 1024, CONFIG["dtype"], CONFIG["device"], generator
+    )
+    
+    # =========================================================================
+    # FASE 3: INTEGRAZIONE DIFFERENZIALE IBRIDA (Il Trapianto in O(N))
+    # =========================================================================
+    logger.info("Avvio del Solver Custom (Equazione di Perturbazione)...")
+    pipe.scheduler.set_timesteps(metadata["steps"], device=CONFIG["device"])
+    
+    for i, t in enumerate(pipe.scheduler.timesteps):
+        logger.info(f"  -> Step ODE {i+1}/{metadata['steps']} (t={t.item()})")
         
-    # --- FASE 2: GENERAZIONE TARGET (CONTROLLO) ---
-    logger.info(f"Fase 2: Generazione Target di Controllo -> '{CONFIG['target_prompt']}'")
-    # Resettiamo il generatore per avere lo stesso rumore iniziale
-    generator.manual_seed(CONFIG["seed"])
-    target_image_pure = pipe(
-        prompt=CONFIG["target_prompt"],
-        num_inference_steps=CONFIG["steps"],
-        generator=generator,
-        output_type="pil"
-    ).images[0]
-    target_image_pure.save(os.path.join(CONFIG["output_dir"], "03_target_pure.png"))
+        # 3A. Calcolo della corrente ambientale (Unica Forward Pass!)
+        # Chiediamo a FLUX: "Come faresti scorrere queste particelle per fare un lago?"
+        v_ambient = pipe.transformer(
+            hidden_states=latents,
+            timestep=t / 1000.0,
+            guidance=None,
+            pooled_projections=ambient_pooled,
+            encoder_hidden_states=ambient_embeds,
+            txt_ids=ambient_txt_ids,
+            img_ids=latent_image_ids,
+            return_dict=False,
+        )[0]
+        
+        # 3B. APPLICAZIONE DEL TEOREMA DI PERTURBAZIONE (Latent Stitching)
+        # v_stitch = v_ambient + lambda * [A_target * (v0_target - v_ambient)]
+        # Spiegazione matematica:
+        # - Dove A_target è 0 (lago puro), il termine tra quadre si annulla. v_stitch = v_ambient.
+        # - Dove A_target è 1 (centro sfera), v_ambient si elide, rimane la forza della sfera: v_stitch = v0_target.
+        # - Dove A_target è (0, 1) (bordi), avviene una sovrapposizione continua e differenziabile,
+        #   risolvendo il limite di salto di Lipschitz dimostrato nel Capitolo 4.
+        delta_v = A_target * (v0_target - v_ambient)
+        v_stitch = v_ambient + (CONFIG["lambda_val"] * delta_v)
+        
+        # 3C. Integrazione di Eulero (Avanzamento temporale)
+        # Il solver sposta i latenti seguendo la nuova traiettoria ibrida appena calcolata.
+        latents = pipe.scheduler.step(v_stitch, t, latents, return_dict=False)[0]
 
-    # --- FASE 3: LATENT STITCHING ---
-    logger.info("Fase 3: Esecuzione Latent Stitching...")
-    generator.manual_seed(CONFIG["seed"])
+    # =========================================================================
+    # FASE 4: COLLASSO D'ONDA E DECODING (Spazio Pixel)
+    # =========================================================================
+    logger.info("Decodifica VAE in corso...")
+    # FLUX necessita di spacchettare i latenti (da 4096 tokens spaziali a matrice 2D)
+    latents = pipe._unpack_latents(latents, 1024, 1024, pipe.vae_scale_factor)
+    latents = (latents / pipe.vae.config.scaling_factor) + pipe.vae.config.shift_factor
     
-    def stitching_callback(pipe, step_index, timestep, callback_kwargs):
-        if step_index == 0:
-            # Recuperiamo il latente target attuale
-            target_latent = callback_kwargs["latents"]
-            source_latent = storage["source_latent_step1"]
-            M = storage["mask_tensor"]
-            
-            # THE MAGIC EQUATION: x_stitch = M * x_source + (1 - M) * x_target
-            stitched_latent = (M * source_latent) + ((1.0 - M) * target_latent)
-            
-            # Sovrascriviamo il latente per i successivi step
-            callback_kwargs["latents"] = stitched_latent
-            logger.info("   -> Stitching Matematico Applicato. Modello forzato ad armonizzare.")
-            
-        return callback_kwargs
-
-    stitched_image = pipe(
-        prompt=CONFIG["target_prompt"],
-        num_inference_steps=CONFIG["steps"],
-        generator=generator,
-        callback_on_step_end=stitching_callback,
-        output_type="pil"
-    ).images[0]
+    with torch.no_grad():
+        image = pipe.vae.decode(latents, return_dict=False)[0]
+        
+    image = pipe.image_processor.postprocess(image, output_type="pil")[0]
     
-    stitched_image.save(os.path.join(CONFIG["output_dir"], "04_final_stitched_image.png"))
-    logger.info(f"Esperimento completato con successo. Risultati salvati in {CONFIG['output_dir']}/")
+    out_path = os.path.join(CONFIG["output_dir"], f"strada_b_perfect_stitch_{CONFIG['word_to_isolate']}.png")
+    image.save(out_path)
+    logger.info(f"[SUCCESS] Q.E.D. Immagine fusa salvata in: {out_path}")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logger.error(f"Errore fatale: {e}")
-        logger.error(traceback.format_exc())
+    main()

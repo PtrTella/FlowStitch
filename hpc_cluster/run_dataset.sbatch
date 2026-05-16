@@ -10,9 +10,8 @@
 
 # Variable
 export HF_HOME="/scratch.hpc/pietro.tellarini2/huggingface_cache"
-export DIFFUSERS_NO_FLASH_ATTN=1
 export PYTHONUNBUFFERED=1
 
 # Python
-source /scratch.hpc/pietro.tellarini2/.venv/bin/activate
+source .venv_hpc/bin/activate
 python hpc_cluster/flux_dataset_generator.py

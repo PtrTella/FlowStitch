@@ -14,6 +14,6 @@ export DIFFUSERS_NO_FLASH_ATTN=1
 export PYTHONUNBUFFERED=1
 
 # Python
-source /scratch.hpc/pietro.tellarini2/.venv/bin/activate
+source .venv_hpc/bin/activate
 python hpc_cluster/flux_latent_stitching.py
 

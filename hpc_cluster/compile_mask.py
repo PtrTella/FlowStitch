@@ -110,7 +110,7 @@ def compile_semantic_mask(
     A_target = A_target.unsqueeze(0).unsqueeze(-1).to(torch.float32)
 
     # 6. Salvataggio
-    out_file = os.path.join(db_path, f"A_target_{word_to_isolate}.pt")
+    out_file = os.path.join(db_path, "A_target.pt")
     torch.save(A_target, out_file)
     logger.info(f"[SUCCESS] Maschera compilata e salvata in: {out_file}")
     logger.info(

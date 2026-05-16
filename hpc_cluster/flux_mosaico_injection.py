@@ -27,18 +27,13 @@ def main():
     pipe = FluxPipeline.from_pretrained(CONFIG["model_id"], torch_dtype=CONFIG["dtype"]).to(torch_device)
     pipe.set_progress_bar_config(disable=True)
     
-    # 1. CARICAMENTO DAL DB (La Trinità: Maschera, Vettore, Rumore)
+    # 1. ESTRAZIONE DAL VECTOR DB 
     logger.info("Estrazione Genetica dal DB...")
-    attn_target = torch.load(os.path.join(CONFIG["db_path"], "attention_maps.pt"), map_location="cpu", weights_only=True)
-    A_target = attn_target['layer_10'] # Supponendo tu abbia già la maschera 2D pronta in formato [1, 4096, 1]
     
-    # Nel tuo DB dovresti avere la maschera già collassata a [1, 4096, 1] normalizzata.
-    # Per semplicità qui assumiamo che A_target sia già il tensore maschera [0,1].
-    # (Se hai il tensore grezzo, ripeti il codice di estrazione token dei messaggi precedenti)
-    
+    A_target = torch.load(os.path.join(CONFIG["db_path"], f"A_target_{CONFIG['word_to_isolate']}.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
     v0_db = torch.load(os.path.join(CONFIG["db_path"], "v0_velocity.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
     x0_db = torch.load(os.path.join(CONFIG["db_path"], "x0_noise.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
-
+    
     # 2. IL MOSAICO QUANTISTICO
     logger.info("Preparazione Mosaico Iniziale...")
     with torch.no_grad():

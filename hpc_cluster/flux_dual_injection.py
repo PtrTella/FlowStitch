@@ -1,154 +1,232 @@
 import os
-import json
 import torch
+import torch.nn as nn
 import logging
 from diffusers import FluxPipeline
-from transformers import T5Tokenizer
+import torchvision.transforms.functional as TF
+import warnings
 
-# =============================================================================
-# CONFIGURAZIONE SPERIMENTALE - DUAL INJECTION (FISICA + SEMANTICA)
-# =============================================================================
+from diffusers.models.attention_processor import FluxSingleAttnProcessor2_0, FluxAttnProcessor2_0
+
+class SemanticGraftingProcessor:
+    """
+    Custom Attention Processor per il Latent Stitching.
+    Avvolge i processori di attenzione di FLUX per iniettare l'attrattore semantico (A_target).
+    """
+    def __init__(self, original_processor, A_target, injection_strength=0.8):
+        # Salviamo il processore originale per eseguire la matematica complessa di FLUX
+        self.original_processor = original_processor
+        
+        # L'attrattore spaziale [1, 4096, 1] che definisce il perimetro dell'oggetto
+        self.A_target = A_target 
+        
+        # Quanta "forza" semantica applicare (1.0 = blocco totale, 0.0 = nessuna iniezione)
+        self.injection_strength = injection_strength
+
+    def __call__(
+        self,
+        attn,
+        hidden_states,
+        encoder_hidden_states=None,
+        attention_mask=None,
+        image_rotary_emb=None,
+    ):
+        # 1. Lasciamo che FLUX calcoli l'attenzione standard nel suo ecosistema
+        # Questo garantisce che tutte le posizioni spaziali e i RoPE embeddings siano corretti.
+        out_hidden_states = self.original_processor(
+            attn,
+            hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            attention_mask=attention_mask,
+            image_rotary_emb=image_rotary_emb,
+        )
+        
+        # 2. INIEZIONE SEMANTICA (Feature Blending post-attenzione)
+        # FLUX usa tensori sequenziali. Nei layer 'Single' immagine e testo sono concatenati.
+        # Dobbiamo isolare solo i token dell'immagine (che in FLUX sono sempre all'inizio della sequenza).
+        
+        num_image_tokens = self.A_target.shape[1] # 4096
+        
+        if out_hidden_states.shape[1] >= num_image_tokens:
+            # Estraiamo le features calcolate dall'attenzione per la zona immagine
+            img_features = out_hidden_states[:, :num_image_tokens, :]
+            
+            # IL CAMPO DI FORZA:
+            # Dove A_target è 1 (centro della sfera), respingiamo i cambiamenti
+            # imposti dal prompt "lago" e forziamo il mantenimento dello stato originale 
+            # (che è guidato dal nostro v0 e x0).
+            # Dove A_target è 0 (lago), lasciamo l'output intatto.
+            
+            # Applicazione della maschera termodinamica
+            protected_features = hidden_states[:, :num_image_tokens, :] 
+            blended_features = img_features * (1.0 - (self.A_target * self.injection_strength)) + \
+                               protected_features * (self.A_target * self.injection_strength)
+            
+            # Sostituiamo le features modificate nel tensore di output
+            out_hidden_states[:, :num_image_tokens, :] = blended_features
+
+        return out_hidden_states
+
+def inject_semantic_processors(pipe, A_target, injection_strength=0.8, target_blocks="single"):
+    """
+    Inietta il Custom Processor navigando direttamente l'albero dei moduli PyTorch, 
+    bypassando i wrapper mancanti nelle versioni più vecchie di diffusers.
+    """
+    # Creiamo un dizionario di backup agganciato al transformer per conservare i processori "vanilla"
+    if not hasattr(pipe.transformer, "original_processors_cache"):
+        pipe.transformer.original_processors_cache = {}
+
+    for name, module in pipe.transformer.named_modules():
+        # Identifichiamo i layer di attenzione
+        if name.endswith("attn") and hasattr(module, "processor"):
+            
+            # Salviamo il processore originale la prima volta che passiamo di qui
+            if name not in pipe.transformer.original_processors_cache:
+                pipe.transformer.original_processors_cache[name] = module.processor
+            
+            original_proc = pipe.transformer.original_processors_cache[name]
+            
+            # Applichiamo l'innesto semantico in base al tipo di blocco
+            if "single_transformer_blocks" in name and target_blocks in ["single", "all"]:
+                module.processor = SemanticGraftingProcessor(original_proc, A_target, injection_strength)
+            elif "transformer_blocks" in name and "single" not in name and target_blocks in ["double", "all"]:
+                module.processor = SemanticGraftingProcessor(original_proc, A_target, injection_strength)
+                
+    return pipe
+
+def remove_semantic_processors(pipe):
+    """
+    Ripristina i processori originali estraendoli dalla nostra cache custom,
+    riportando il modello allo stato vergine.
+    """
+    if hasattr(pipe.transformer, "original_processors_cache"):
+        for name, module in pipe.transformer.named_modules():
+            if name.endswith("attn") and hasattr(module, "processor"):
+                if name in pipe.transformer.original_processors_cache:
+                    module.processor = pipe.transformer.original_processors_cache[name]
+
+
+# --- CONFIGURAZIONE ---
 CONFIG = {
     "model_id": "black-forest-labs/FLUX.1-schnell", 
     "db_path": "data/dataset_v1/a_blue_sphere",     
     "output_dir": "data/stitching_results",         
     "ambient_prompt": "a crystal clear lake",       
-    "word_to_isolate": "sphere",                    
+    "word_to_isolate": "sphere",
     
-    # I DUE MOTORI DEL TRAIPIANTO
-    "lambda_phys": 0.8,  # Forza strutturale dal DB (Forma geometrica perfetta)
-    "lambda_sem": 0.5,   # Consapevolezza live (Texture, ombre, no trasparenza)
+    # PARAMETRI DEL TEOREMA
+    "lambda_v0": 1.0,           # Forza dello stitching cinematico (Fisica)
+    "injection_strength": 0.85, # Forza della restrizione semantica (Attenzione)
     
-    "device": torch.device("cuda"),
-    "dtype": torch.bfloat16,
-    "lake_seed": 1337                               
+    "device": "cuda",
+    "dtype": torch.bfloat16                         
 }
 
+torch_device = torch.device(CONFIG["device"])
+warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def main():
     os.makedirs(CONFIG["output_dir"], exist_ok=True)
-    
-    logger.info("Caricamento del Motore Differenziale (FLUX) e Tokenizer...")
-    pipe = FluxPipeline.from_pretrained(CONFIG["model_id"], torch_dtype=CONFIG["dtype"]).to(CONFIG["device"])
+    pipe = FluxPipeline.from_pretrained(CONFIG["model_id"], torch_dtype=CONFIG["dtype"]).to(torch_device)
     pipe.set_progress_bar_config(disable=True)
-    tokenizer = T5Tokenizer.from_pretrained(
-        "google/t5-v1_1-xxl", legacy=False, clean_up_tokenization_spaces=True
-    )
     
     # =========================================================================
-    # FASE 1: ESTRAZIONE DAL VECTOR DB (Topologia Pura)
+    # 1. ESTRAZIONE DAL VECTOR DB 
     # =========================================================================
-    logger.info(f"Apertura del Vector DB: {CONFIG['db_path']}")
+    logger.info("Estrazione Genetica dal DB...")
     
-    with open(os.path.join(CONFIG["db_path"], "metadata.json"), "r") as f:
-        metadata = json.load(f)
-    target_prompt = metadata["prompt"]
+    # Assicurati di aver precedentemente compilato la maschera con lo script del notebook!
+    A_target = torch.load(os.path.join(CONFIG["db_path"], f"A_target.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
+
+    # FIX: GAUSSIAN BLUR SULL'ATTRATTORE (Smussamento della Scogliera)
+    logger.info("Ammorbidimento dei bordi quantistici (Gaussian Blur)...")
+    b, seq, c = A_target.shape  # Dovrebbe essere [1, 4096, 1]
+    h = w = int(seq ** 0.5)     # 64x64
     
-    # 1A. COSTRUZIONE DELL'ATTRATTORE SEMANTICO (A_target)
-    attn_target = torch.load(os.path.join(CONFIG["db_path"], "attention_maps.pt"), map_location="cpu", weights_only=True)
-    layer_10 = attn_target['layer_10'] 
+    # Rimodelliamo in formato immagine [Batch, Canali, Altezza, Larghezza] per il filtro
+    A_target_2d = A_target.view(b, c, h, w)
     
-    tokens = tokenizer(target_prompt, return_tensors="pt").input_ids[0]
-    token_indices = [i for i, token in enumerate(tokens) if tokenizer.decode([token]).strip().lower() in CONFIG["word_to_isolate"] and len(tokenizer.decode([token]).strip().lower()) > 0]
-            
-    if not token_indices:
-        raise ValueError(f"Anomalia: Parola '{CONFIG['word_to_isolate']}' non trovata.")
-        
-    attn_maps_list = [layer_10[0, :, :, idx].mean(dim=0) for idx in token_indices]
-    attn_map = torch.clamp(torch.stack(attn_maps_list).sum(dim=0), min=0.0, max=1.0).to(CONFIG["device"], dtype=CONFIG["dtype"])
+    # Applichiamo il blur. 
+    # kernel_size=5 e sigma=2.0 sono ottimi per iniziare a fondere i bordi senza perdere la forma.
+    # Riduciamo il blur da kernel=[5,5] sigma=2.0 a qualcosa di quasi impercettibile
+    A_target_blurred = TF.gaussian_blur(A_target_2d, kernel_size=[3, 3], sigma=[2.5, 2.5])
     
-    attn_min, attn_max = attn_map.min(), attn_map.max()
-    A_target = (attn_map - attn_min) / (attn_max - attn_min + 1e-8)
-    A_target = A_target.unsqueeze(0).unsqueeze(-1) # [1, 4096, 1]
+    # Riportiamo al formato sequenziale [1, 4096, 1] per il Transformer
+    A_target = A_target_blurred.view(b, seq, c)
+
+    v0_db = torch.load(os.path.join(CONFIG["db_path"], "v0_velocity.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
+    x0_db = torch.load(os.path.join(CONFIG["db_path"], "x0_noise.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
     
-    # 1B. CARICAMENTO FORZA FISICA (v0_db)
-    v0_db = torch.load(os.path.join(CONFIG["db_path"], "v0_velocity.pt"), map_location="cpu", weights_only=True).to(CONFIG["device"], dtype=CONFIG["dtype"])
+    # =========================================================================
+    # 2. INNESTO SEMANTICO (Hacking dell'Attenzione)
+    # =========================================================================
+    logger.info("Iniezione del Custom Attention Processor...")
+    # Applichiamo il processore sui blocchi 'single' per proteggere l'identità della sfera
+    pipe = inject_semantic_processors(pipe, A_target, injection_strength=CONFIG["injection_strength"])
 
     # =========================================================================
-    # FASE 2: PREPARAZIONE DELLE DUE MENTI (Lago e Sfera)
+    # 3. IL MOSAICO QUANTISTICO E ODE LOOP
     # =========================================================================
-    logger.info("Encoding delle istruzioni semantiche...")
-    
-    # Mente 1: L'Ambiente
-    ambient_embeds, ambient_pooled, ambient_txt_ids = pipe.encode_prompt(
-        prompt=CONFIG["ambient_prompt"], prompt_2=None
-    )
-    
-    # Mente 2: L'Oggetto (Consapevolezza Live)
-    target_embeds, target_pooled, target_txt_ids = pipe.encode_prompt(
-        prompt=target_prompt, prompt_2=None
-    )
-    
-    generator = torch.Generator(device=CONFIG["device"]).manual_seed(CONFIG["lake_seed"])
-
+    logger.info("Preparazione Mosaico Iniziale...")
     with torch.no_grad():
-        latents, latent_image_ids = pipe.prepare_latents(
-            1, pipe.transformer.config.in_channels // 4, 1024, 1024, CONFIG["dtype"], CONFIG["device"], generator
+        ambient_embeds, ambient_pooled, ambient_txt_ids = pipe.encode_prompt(CONFIG["ambient_prompt"], prompt_2=None)
+        
+        generator = torch.Generator(device=torch_device)
+        latents_lake, latent_image_ids = pipe.prepare_latents(
+            1, pipe.transformer.config.in_channels // 4, 1024, 1024, CONFIG["dtype"], torch_device, generator
         )
         
-        # =========================================================================
-        # FASE 3: INTEGRAZIONE DIFFERENZIALE A DOPPIA INIEZIONE
-        # =========================================================================
-        logger.info("Avvio Dual Injection Solver (Fisica DB + Semantica Live)...")
-        pipe.scheduler.set_timesteps(metadata["steps"], device=CONFIG["device"])
+        # Mosaico Iniziale (Saldatura di x0)
+        latents = latents_lake * (1.0 - A_target) + x0_db * torch.sqrt(A_target)
         
-        for i, t in enumerate(pipe.scheduler.timesteps):
-            logger.info(f"  -> Step ODE {i+1}/{metadata['steps']} (t={t.item()})")
+        logger.info("Integrazione Differenziale (ODE)...")
+        pipe.scheduler.set_timesteps(4, device=torch_device)
+        
+        for t in pipe.scheduler.timesteps:
             timestep_1d = (t / 1000.0).expand(latents.shape[0]).to(latents.dtype)
 
-            # 3A. FLUSSO AMBIENTALE (Cosa farebbe il lago da solo?)
+            # Il modello calcola le correnti per il lago, ma ora la SUA ATTENZIONE È HACKERATA!
             v_ambient = pipe.transformer(
-                hidden_states=latents,
-                timestep=timestep_1d,
-                guidance=None,
-                pooled_projections=ambient_pooled,
-                encoder_hidden_states=ambient_embeds,
-                txt_ids=ambient_txt_ids,
-                img_ids=latent_image_ids,
-                return_dict=False,
+                hidden_states=latents, timestep=timestep_1d, guidance=None,
+                pooled_projections=ambient_pooled, encoder_hidden_states=ambient_embeds,
+                txt_ids=ambient_txt_ids, img_ids=latent_image_ids, return_dict=False
             )[0]
             
-            # 3B. FLUSSO SEMANTICO (Cosa farebbe la sfera se fosse qui ora?)
-            # Questa è la vera "Consapevolezza". FLUX guarda le onde del lago e prova a renderizzare "a blue sphere"
-            v_live_target = pipe.transformer(
-                hidden_states=latents,
-                timestep=timestep_1d,
-                guidance=None,
-                pooled_projections=target_pooled,
-                encoder_hidden_states=target_embeds,
-                txt_ids=target_txt_ids,
-                img_ids=latent_image_ids,
-                return_dict=False,
-            )[0]
+            # Forza l'inserimento geometrico della sfera (Cinematica)
+            delta_v = A_target * (v0_db - v_ambient)
+            v_stitch = v_ambient + (CONFIG["lambda_v0"] * delta_v)
             
-            # 3C. L'EQUAZIONE DI SINTESI (Attention Grafting Tardivo)
-            # 1. Calcoliamo lo strappo fisico verso il modello ideale (DB)
-            delta_phys = A_target * (v0_db - v_ambient)
-            
-            # 2. Calcoliamo lo strappo semantico verso il materiale/texture corretto (Live)
-            delta_sem = A_target * (v_live_target - v_ambient)
-            
-            # 3. Fondiamo tutto! La sfera vince sul lago proporzionalmente ai nostri pesi.
-            v_stitch = v_ambient + (CONFIG["lambda_phys"] * delta_phys) + (CONFIG["lambda_sem"] * delta_sem)
-            
-            # Integrazione
             latents = pipe.scheduler.step(v_stitch, t, latents, return_dict=False)[0]
 
-        # =========================================================================
-        # FASE 4: DECODING
-        # =========================================================================
-        logger.info("Decodifica VAE in corso...")
+    # =========================================================================
+    # 4. PULIZIA E DECODIFICA (FIX VAE OVERFLOW)
+    # =========================================================================
+    remove_semantic_processors(pipe)
+    logger.info("Decodifica VAE (in Float32 per prevenire i buchi neri)...")
+    
+    with torch.no_grad():
+        # Scompattamento standard
         latents = pipe._unpack_latents(latents, 1024, 1024, pipe.vae_scale_factor)
         latents = (latents / pipe.vae.config.scaling_factor) + pipe.vae.config.shift_factor
         
-        image = pipe.vae.decode(latents, return_dict=False)[0]
-        image = pipe.image_processor.postprocess(image, output_type="pil")[0]
+        # --- FIX CRITICO: CAST A FLOAT32 ---
+        # Spostiamo temporaneamente VAE e latenti a 32-bit per evitare NaN
+        pipe.vae.to(dtype=torch.float32)
+        latents_f32 = latents.to(torch.float32)
         
-        out_path = os.path.join(CONFIG["output_dir"], f"strada_b_dual_injection_{CONFIG['word_to_isolate']}.png")
-        image.save(out_path)
-        logger.info(f"[SUCCESS] Iniezione ibrida completata. File: {out_path}")
+        image = pipe.vae.decode(latents_f32, return_dict=False)[0]
+        
+        # Rimettiamo il VAE in bfloat16 per pulizia
+        pipe.vae.to(dtype=CONFIG["dtype"])
+    
+    image = image.detach()
+    image = pipe.image_processor.postprocess(image, output_type="pil")[0]
+    
+    out_path = os.path.join(CONFIG["output_dir"], "stitching_completo_fisica_semantica_EV.png")
+    image.save(out_path)
+    logger.info(f"[SUCCESS] Immagine salvata in: {out_path}")
 
 if __name__ == "__main__":
     main()

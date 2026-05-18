@@ -109,7 +109,7 @@ def remove_semantic_processors(pipe):
 # --- CONFIGURAZIONE ---
 CONFIG = {
     "model_id": "black-forest-labs/FLUX.1-schnell", 
-    "db_path": "data/dataset_v1/a_blue_sphere",     
+    "db_path": "data/dataset_v1/a_yellow_pyramid",     
     "output_dir": "data/stitching_results",         
     "ambient_prompt": "a crystal clear lake",       
     "word_to_isolate": "sphere",
@@ -152,7 +152,11 @@ def main():
     # kernel_size=5 e sigma=2.0 sono ottimi per iniziare a fondere i bordi senza perdere la forma.
     # Riduciamo il blur da kernel=[5,5] sigma=2.0 a qualcosa di quasi impercettibile
     A_target_blurred = TF.gaussian_blur(A_target_2d, kernel_size=[3, 3], sigma=[2.5, 2.5])
-    
+    # --- MODIFICA CRITICA: RIPRISTINO DEL PICCO A 1.0 ---
+    # Il blur spalma l'energia abbassando il picco. Dividendo per il max, il core torna solido (1.0)
+    max_val = A_target_blurred.max()
+    A_target_blurred = A_target_blurred / (max_val + 1e-8)
+    # -----------------------------------------------------
     # Riportiamo al formato sequenziale [1, 4096, 1] per il Transformer
     A_target = A_target_blurred.view(b, seq, c)
 
@@ -224,7 +228,7 @@ def main():
     image = image.detach()
     image = pipe.image_processor.postprocess(image, output_type="pil")[0]
     
-    out_path = os.path.join(CONFIG["output_dir"], "stitching_completo_fisica_semantica_EV.png")
+    out_path = os.path.join(CONFIG["output_dir"], "stitching_completo_fisica_semantica_pyr.png")
     image.save(out_path)
     logger.info(f"[SUCCESS] Immagine salvata in: {out_path}")
 

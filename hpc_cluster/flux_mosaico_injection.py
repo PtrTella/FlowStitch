@@ -1,5 +1,4 @@
 import os
-import json
 import torch
 import logging
 from diffusers import FluxPipeline
@@ -11,7 +10,7 @@ CONFIG = {
     "db_path": "data/dataset_v1/a_blue_sphere",     
     "output_dir": "data/stitching_results",         
     "ambient_prompt": "a crystal clear lake",       
-    "lambda_val": 1.0,  
+    "lambda_val": 0.50,  
     "device": "cuda",
     "dtype": torch.bfloat16,
     "lake_seed": 42                               
@@ -30,7 +29,7 @@ def main():
     # 1. ESTRAZIONE DAL VECTOR DB 
     logger.info("Estrazione Genetica dal DB...")
     
-    A_target = torch.load(os.path.join(CONFIG["db_path"], f"A_target_{CONFIG['word_to_isolate']}.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
+    A_target = torch.load(os.path.join(CONFIG["db_path"], f"A_target.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
     v0_db = torch.load(os.path.join(CONFIG["db_path"], "v0_velocity.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
     x0_db = torch.load(os.path.join(CONFIG["db_path"], "x0_noise.pt"), map_location="cpu", weights_only=True).to(torch_device, dtype=CONFIG["dtype"])
     
@@ -74,7 +73,7 @@ def main():
         latents = (latents / pipe.vae.config.scaling_factor) + pipe.vae.config.shift_factor
         image = pipe.vae.decode(latents, return_dict=False)[0]
         image = pipe.image_processor.postprocess(image, output_type="pil")[0]
-        image.save(os.path.join(CONFIG["output_dir"], "mosaico_fisico.png"))
+        image.save(os.path.join(CONFIG["output_dir"], f"mosaico_fisico_{CONFIG['lambda_val']}.png"))
 
 if __name__ == "__main__":
     main()

@@ -11,3 +11,5 @@ ipykernel
 transformers 
 sentencepiece
 protobuf
+ripser
+persim

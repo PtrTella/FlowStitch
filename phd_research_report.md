@@ -82,9 +82,18 @@ FlowStitch risolve matematicamente l'ambiguità dell'occlusione tramite la Topol
 
 ---
 
-## 5. Conclusioni
+## 5. Conclusioni e Sviluppi Futuri
 
-Questa ricerca stabilisce un nuovo paradigma: la **Chirurgia Latente Topologica**. Abbandonando le logiche di sogliatura energetica (thresholding) a favore dell'**Omologia Persistente** applicata ai campi vettoriali di Flow Matching, abbiamo dimostrato che è possibile estrarre decomposizioni latenti non supervisionate parametro-free e topologicamente esatte. Questa fondazione apre direttamente la strada a estensioni mozzafiato: il **4D Video Flow Matching** (dove l'oggetto diventa un tubo topologico $H_1$ lungo l'asse temporale) e l'uso di **Attrattori Hamiltoniani Cross-Modali** per controllare il flusso senza l'uso di attention.
+Questa ricerca stabilisce un nuovo paradigma diviso in fasi esplorative:
+1.  **Dinamica Generativa (Notebooks 1-2):** Definizione del flow matching tramite l'equazione di continuità e il Trasporto Ottimale.
+2.  **Crisi dei Descrittori Scalari (Notebooks 3-5):** Analisi del fallimento delle hard mask e scoperta del "Vuoto Termodinamico".
+3.  **Il Limite dell'Euristica Globale (Notebook 6):** L'utilizzo di un gating termodinamico parametrico ha dimostrato di non poter risolvere le patologie spaziali (frammentazione topologica e bleeding) a causa della natura puramente scalare dell'energia.
+4.  **Scomposizione Semantico-Vettoriale e Graph Cuts (Notebook 7):** Risoluzione definitiva tramite una complessa pipeline matematica:
+    - *Sub-Token Resolution:* Soluzione architetturale al problema dell'allineamento testo-immagine nei modelli BPE, calcolando l'attenzione aggregata per ricomporre la semantica frammentata.
+    - *Spectral Co-Embedding Graph Cut:* Abbandono del banale thresholding in favore di un grafo spaziale i cui pesi bilanciano l'affinità di Cross-Attention e la Similarità Coseno del flusso. Il Normalized Cut (tramite il vettore di Fiedler del Laplaciano) permette di spezzare il grafo esattamente lungo i confini fisici di oggetti semanticamente complessi.
+    - *Estrazione del Generative Prior:* L'output della scomposizione non è una semplice maschera d'immagine ($\alpha$), ma l'estrapolazione di $\tilde{v}_0 = \alpha \odot v_0$. Questo tensore rappresenta il *comando di denoising vettoriale* dell'oggetto, pronto per essere archiviato in un database e iniettato per condizionare nativamente future rigenerazioni (Flow Stitching).
+
+Questa fondazione solida apre la strada a future esplorazioni avanzate come il **4D Video Flow Matching** (i target diventano tubi topologici spazio-temporali $H_1$) e l'introduzione di **Attrattori Hamiltoniani Cross-Modali** per deformare le traiettorie generative sfruttando il Teorema di Liouville.
 
 ---
 
@@ -93,7 +102,9 @@ Questa ricerca stabilisce un nuovo paradigma: la **Chirurgia Latente Topologica*
 1.  **Lipman, Y., et al. (2023).** *Flow Matching for Generative Modeling.* ICLR 2023. arXiv:2210.02747.
 2.  **Li, Z., et al. (2026).** *A Kinetic-Energy Perspective of Flow Matching.* arXiv:2602.07928.
 3.  **Li, Z., et al. (2025).** *EnfoPath: Energy-Informed Analysis of Generative Trajectories.* arXiv:2511.19087.
-4.  **Tian, J., et al. (2024).** *Diffuse Attend and Segment: Unsupervised Zero-Shot Segmentation.* CVPR 2024.
-5.  **Carlsson, G. (2009).** *Topology and Data.* Bulletin of the American Mathematical Society.
-6.  **Benamou, J. D., & Brenier, Y. (2000).** *A computational fluid mechanics solution to the Monge-Kantorovich mass transfer problem.* Numerische Mathematik.
-7.  **Sargsyan, A., et al. (2026).** *FlowDIS: Language-Guided Image Segmentation with Flow Matching.* arXiv:2605.05077.
+4.  **Carlsson, G. (2009).** *Topology and Data.* Bulletin of the American Mathematical Society, 46(2), 255-308.
+5.  **Edelsbrunner, H., & Harer, J. (2010).** *Computational Topology: An Introduction.* American Mathematical Society.
+6.  **AA.VV. (2025).** *LatentFM: A flow-based model operating in the latent space for medical image segmentation.* arXiv:2512.04821.
+7.  **Tian, J., et al. (2024).** *Diffuse Attend and Segment: Unsupervised Zero-Shot Segmentation.* CVPR 2024.
+8.  **Benamou, J. D., & Brenier, Y. (2000).** *A computational fluid mechanics solution to the Monge-Kantorovich mass transfer problem.* Numerische Mathematik.
+9.  **Sargsyan, A., et al. (2026).** *FlowDIS: Language-Guided Image Segmentation with Flow Matching.* arXiv:2605.05077.

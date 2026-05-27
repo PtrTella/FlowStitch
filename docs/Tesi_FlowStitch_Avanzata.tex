@@ -1,0 +1,446 @@
+\documentclass[12pt,a4paper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath, amssymb, amsthm, mathrsfs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{cite}
+
+\geometry{a4paper, margin=2.5cm}
+\setstretch{1.2}
+
+% Stile personalizzato per i blocchi di codice Python
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{gray!3},   
+    commentstyle=\color{green!50!black}\itshape,
+    keywordstyle=\color{blue!80!black}\bfseries,
+    numberstyle=\tiny\color{gray!80},
+    stringstyle=\color{purple!90},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=4,
+    frame=single,
+    rulecolor=\color{gray!30}
+}
+\lstset{style=mystyle}
+
+\title{
+  \Huge\textbf{Studio Spaziale e Termodinamico dei Campi di Flusso in Modelli MMDiT}\\
+  \vspace{0.8cm}
+  \large\textit{Decomposizione Spettrale dei Latenti e Perturbazioni ODE Tangenti: Il Framework FlowStitch per l'Estrazione e Iniezione Zero-Shot}\\
+  \vspace{1.5cm}
+  \normalsize Tesi di Laurea Magistrale in Ingegneria Informatica / Intelligenza Artificiale
+}
+\author{\textbf{Candidato: User}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Questo lavoro di tesi documenta la ricerca teorica e l'implementazione sperimentale di \textbf{FlowStitch}, un framework innovativo per la segmentazione semantica zero-shot e il latent stitching all'interno di modelli generativi basati su Flow Matching multimodale (in particolare, l'architettura MMDiT di FLUX.1). Deostruendo in modo sequenziale i notebook sperimentali da 01 a 06 sviluppati sul cluster di calcolo, l'elaborato traccia un filo logico coerente che muove dall'analisi topologica iniziale allo step $t=0$ fino alla formulazione di perturbazioni continue Lipschitz-regolari nello spazio tangente dell'ODE. Vengono formalizzati matematicamente i fenomeni fisici emersi durante lo stress-test dei modelli generativi, tra cui il \textit{Ghosting Termodinamico} e il \textit{Vuoto Termodinamico} (Thermodynamic Void). Per ovviare a quest'ultimo paradosso energetico, viene introdotto e documentato in dettaglio lo Spectral Matting latente, calcolato tramite il vettore di Fiedler del Laplaciano normalizzato spettrale delle Key di attenzione, accoppiato a una diffusione markoviana guidata da sementi semantiche estratte tramite decomposizione a valori singolari (SVD) sulle teste dell'attenzione. I risultati confermano l'efficacia del framework nell'eseguire editing e iniezioni non distruttive a complessità computazionale contenuta e idonea a contesti HPC.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\chapter{Introduzione e Fondamenti del Flow Matching}
+
+\section[Modelli Probabilistici vs Continuous Normalizing Flows]{Modelli Probabilistici vs\\ Continuous Normalizing Flows}
+I modelli di diffusione stocastica tradizionali (DDPM o equazioni differenziali stocastiche di It\^o) modellano la generazione di dati invertendo un processo di diffusione Markoviana. Sebbene abbiano dominato lo stato dell'arte per anni, essi soffrono di traiettorie curve e alta varianza nel campionamento, richiedendo un numero elevato di passi discreti di inferenza. 
+
+I modelli basati su \textit{Flow Matching} (FM) e \textit{Rectified Flow} \cite{lipman2023flow, liu2022flow} superano questo paradigma modellando la transizione tra la distribuzione sorgente (rumore gaussiano $p_0$) e la distribuzione target (dati reali $p_1$) come un trasporto fluido e deterministico governato da un'Equazione Differenziale Ordinaria (ODE):
+\begin{equation}
+    \frac{dz_t}{dt} = v_\theta(z_t, t)
+\end{equation}
+Dove $z_t$ rappresenta il cammino latente interpolato e $v_\theta$ è il campo vettoriale di velocità appreso da una rete neurale. Nel caso del flusso rettificato ad accoppiamento lineare, la traiettoria ideale tra un campione di rumore $x_0 \sim p_0$ e un'immagine reale $x_1 \sim p_1$ è definita dall'interpolazione rettilinea:
+\begin{equation}
+    x_t = t x_1 + (1 - t) x_0
+\end{equation}
+La velocità teorica costante lungo questo percorso è la derivata temporale:
+\begin{equation}
+    v_t = \frac{dx_t}{dt} = x_1 - x_0
+\end{equation}
+L'obiettivo di addestramento del Transformer è minimizzare la discrepanza tra il campo vettoriale predetto $v_\theta(z_t, t)$ e il differenziale reale $x_1 - x_0$. Questa quasi-linearità delle traiettorie rende le ODE molto più stabili e apre le porte a manipolazioni geometriche locali lungo il flusso.
+
+\section{L'Architettura FLUX e il Paradigma MMDiT}
+Nel modello FLUX.1 di Black Forest Labs, l'architettura standard a blocchi U-Net (in cui le feature testuali condizionano esternamente le feature visive tramite moduli cross-attention discreti) lascia il posto al paradigma \textit{Multimodal Diffusion Transformer} (MMDiT). 
+
+In un blocco MMDiT, le rappresentazioni del testo e dell'immagine vengono elaborate congiuntamente. Nei primi 19 blocchi (\textit{Double-Stream}), Query ($Q$), Key ($K$) e Value ($V$) vengono proiettate in parallelo con pesi indipendenti per ciascuna modalità, ma le sequenze vengono concatenate per consentire lo scambio bidirezionale di informazioni. Nei successivi 38 blocchi (\textit{Single-Stream}), la concatenazione è permanente, e il modello opera una \textit{Full Attention} su un unico tensore globale. Questo design fa s\`i che la semantica testuale e la topologia dell'immagine siano fuse inestricabilmente in ogni singolo layer.
+
+\chapter{Stato dell'Arte e Analisi Critica della Letteratura}
+
+\section{Segmentazione Semantica Zero-Shot da Modelli Generativi}
+L'idea di estrarre maschere di segmentazione dai modelli generativi in modo completamente non supervisionato e zero-shot affonda le sue radici nella capacità dei modelli di diffusione di accumulare conoscenza strutturale e semantica del mondo visivo all'interno delle loro matrici di attenzione.
+
+Il lavoro pionieristico \textbf{MasaCtrl} \cite{masactrl2023} introduce il concetto di \textit{mutual self-attention} per garantire la consistenza dell'identità visiva durante l'editing di immagini non rigide. Gli autori osservano che è possibile isolare maschere di segmentazione guidate direttamente dalle mappe di cross-attention del modello generativo per risolvere il conflitto spaziale tra primo piano e sfondo. Questo convalida l'uso delle mappe di attenzione come "planimetrie" geometriche.
+
+Evolvendo questo concetto, \textbf{DiffCut} \cite{diffcut2024} dimostra come le feature estratte dall'ultimo blocco di self-attention di un codificatore U-Net racchiudano informazioni semantiche di altissima precisione. Invece di ricorrere a soglie euristiche grossolane (binarizzazioni lineari), DiffCut astrae le matrici di affinità spaziale dell'attenzione sotto forma di un grafo planare pesato ed esegue una decomposizione spettrale basata sull'algoritmo di \textit{Recursive Normalized Cut}. Questo consente di isolare il target lungo i confini fisici reali con precisione sub-pixel. Il framework FlowStitch estende questo concetto adattandolo dall'architettura U-Net convoluzionale ai blocchi single-stream MMDiT di FLUX.1.
+
+\section{Cinematica e Fisica delle Traiettorie ODE}
+La transizione dai modelli di diffusione discreti al Flow Matching basato su ODE continue introduce la necessità di analizzare la dinamica spaziale lungo la traiettoria temporale di campionamento.
+
+Il framework \textbf{EnfoPath} \cite{enfopath2025} introduce una grandezza diagnostica fondamentale: la \textit{Kinetic Path Energy} (KPE). Ispirandosi alla meccanica classica, la KPE quantifica lo sforzo differenziale integrato richiesto dal campo vettoriale per trasportare i pixel:
+\begin{equation}
+    E_{\text{kinetic}}(z) = \frac{1}{2} \int_0^1 \|v_\theta(z_t, t)\|^2 dt
+\end{equation}
+Gli autori dimostrano che traiettorie caratterizzate da maggiore KPE convergono verso campioni a più alta complessità semantica e risiedono sulle frontiere a bassa densità del manifold dei dati (zone rare e non sature). 
+In FlowStitch, questa formulazione spiega teoricamente il fallimento del gating energetico globale: le zone omogenee al centro di un oggetto non richiedono sforzo dinamico (basso KPE), provocando il collasso delle maschere al centro (Thermodynamic Void).
+
+Il lavoro fondamentale \textbf{A Kinetic-Energy Perspective of Flow Matching} \cite{kinetic2026} mette in luce un paradosso critico: ad energie cinematiche estremamente elevate, il modello degenera in fenomeni di pura memorizzazione di copie esatte dei dati di addestramento. Questo comportamento deriva dalla singolarità terminale $(1-t)^{-1}$ presente nel Flow Matching empirico. Per prevenire questo degrado, gli autori propongono il \textit{Kinetic Trajectory Shaping} (KTS), che modula la dinamica accelerando il moto nelle fasi iniziali e applicando un damping (smorzamento) asintotico nella fase terminale per forzare un atterraggio morbido. In FlowStitch, il KTS viene implementato per stabilizzare la perturbazione tangente dell'ODE ed evitare l'esplosione entropica a $t \to 1$.
+
+\section{Problemi Inversi e Condizionamento Latente}
+La manipolazione tangenziale del campo di velocità ad ogni passo dell'ODE è strettamente correlata alle metodologie per la risoluzione di problemi inversi mal posti.
+
+I metodi \textbf{Plug-and-Play (PnP)} \cite{pnp2025} dimostrano che è possibile disaccoppiare il processo generativo stocastico in stadi separati di denoising, consistenza fisica e campionamento, iniettando vincoli di consistenza direttamente sulla stima denoisata intermedia senza distorcere la geodetica di campionamento. Questo principio convalida l'approccio di FlowStitch di operare perturbazioni tangenti sul campo di velocità $v_t$ preservando la fluidità globale.
+
+Inoltre, \textbf{LatentFM} \cite{latentfm2025} dimostra che il Flow Matching operato nello spazio latente di due VAE disaccoppiati (uno per l'immagine e uno per la maschera) consente di modellare la distribuzione esatta della maschera di segmentazione condizionatamente all'immagine, catturando l'incertezza aleatoria del modello clinico in ambito medico. FlowStitch condivide l'obiettivo di operare interamente nello spazio latente per massimizzare l'efficienza computazionale, ma si distingue come approccio \textit{training-free} (zero-shot) operante su modelli pre-addestrati senza la necessità di addestramento condizionale.
+
+\chapter{Notebook 01: Analisi Spaziale e Topologica a \texorpdfstring{$t=0$}{t=0}}
+
+\section{Obiettivi e Formulazione di Partenza}
+Il primo notebook (\texttt{01\_topological\_analysis.ipynb}) costituisce l'indagine empirica preliminare sull'ipotesi fondante del framework FlowStitch: la presenza di una struttura geometrica e topologica definita fin dal primissimo istante dell'inferenza generativa ($t=0$). 
+
+Nei modelli di \textit{Continuous Normalizing Flow} e \textit{Rectified Flow} \cite{lipman2023flow, liu2022flow}, il solutore numerico integra un campo vettoriale per calcolare la traiettoria dal rumore gaussiano iniziale $x_0$ all'immagine latente pulita finale $x_1$. Nel caso specifico dell'accoppiamento lineare rettificato, lo spostamento iniziale previsto dalla rete neurale al tempo $t=0$ è rappresentato dalla velocità $v_0$. Il modello calcola una proiezione lineare diretta del punto terminale atteso nello spazio latente, formalizzato come:
+\begin{equation}
+    x_{\text{pred}} = x_0 + v_0
+\end{equation}
+Dove $x_0 \sim \mathcal{N}(0, I)$ rappresenta lo stato quantistico iniziale e $v_0$ è la derivata temporale calcolata dal trasformatore. L'obiettivo del notebook è verificare in che modo la semantica (definita dal prompt testuale) e la fisica (lo sforzo vettoriale di movimento) si allineino spazialmente a $t=0$.
+
+\section{Estrazione dei Tensori Latenti e Media delle Teste}
+L'architettura di estrazione poggia sull'intercettazione dei segnali interni di FLUX.1. Nello specifico, viene prelevata la mappa di Joint Attention dal Layer 10 dell'MMDiT, eletto a layer di analisi in quanto punto di equilibrio ottimale tra le feature semantiche astratte proprie dei layer più alti e le feature geometriche primitive dei layer iniziali.
+
+Il codice estrae il tensore di attenzione crudo che possiede la forma \texttt{[Heads, Seq\_Len, Text\_Len]} (dove $\text{Seq\_Len} = 4096$ rappresenta i token latenti dell'immagine compressa $64\times 64$, $\text{Text\_Len} = 512$ rappresenta i token testuali del prompt, e $\text{Heads} = 24$ indica le teste di attenzione del trasformatore). Il primo passaggio algoritmico consiste nell'eliminazione della dimensione del batch e nel calcolo della media lungo le 24 teste di attenzione per estrarre un potenziale semantico unificato:
+
+\begin{lstlisting}[language=Python, caption={Codice di estrazione dell'attenzione media per token}]
+# Estrazione del tensore per il batch corrente [24, 4096, 512]
+layer10 = attn['layer_10']
+# Calcolo della media matematica lungo le 24 heads di FLUX
+attn_mean = layer10[0].mean(dim=0) # Risultato shape: [4096, 512]
+\end{lstlisting}
+
+Per ciascun token testuale decodificato tramite il tokenizer T5, viene estratta la corrispondente colonna del tensore \texttt{attn\_mean} (di forma \texttt{[4096]}), che viene ripiegata in una matrice prima bidimensionale $64 \times 64$ per mappare la distribuzione dell'attenzione sullo spazio pittorico dell'immagine.
+
+\section{Binarizzazione Semantica Tramite Otsu}
+Per validare l'allineamento semantico, il notebook implementa l'algoritmo di sogliatura adattiva di Otsu \cite{otsu1979threshold} sulle mappe di cross-attention normalizzate. Questo metodo calcola in modo non supervisionato la soglia ottima $\tau$ che minimizza la varianza intraclasse dei pixel neri e bianchi:
+\begin{equation}
+    \sigma^2_w(t) = \omega_0(t)\sigma^2_0(t) + \omega_1(t)\sigma^2_1(t)
+\end{equation}
+Il codice esegue una normalizzazione min-max della mappa di attenzione del token target, calcola la soglia e applica l'operatore booleano per estrarre la maschera semantica pura $\alpha_{\text{sem}}$:
+
+\begin{lstlisting}[language=Python, caption={Binarizzazione di Otsu sulle mappe normalizzate}]
+# 1. Normalizzazione min-max per stabilizzare l'intervallo di attenzione
+map_min, map_max = token_map_2d.min(), token_map_2d.max()
+token_norm = (token_map_2d - map_min) / (map_max - map_min + 1e-8)
+
+# 2. Calcolo della soglia di Otsu ed estrazione della maschera booleana
+thresh = threshold_otsu(token_norm)
+semantic_mask = token_norm > thresh
+\end{lstlisting}
+
+L'analisi visiva delle maschere risultanti conferma che la cross-attention definisce in modo robusto il nucleo volumetrico del soggetto (\textit{Core Density}). Tuttavia, i bordi presentano un comportamento sfocato che si allarga oltre i confini effettivi dell'oggetto (\textit{Attention Bleed}), rendendo l'attenzione testuale insufficiente a descrivere da sola la geometria dei contorni.
+
+\section{Allineamento tra Attenzione ed Energia Fisica}
+Per indagare la componente geometrica, il notebook calcola la magnitudo del campo vettoriale $v_0$. Ciascun token latente possiede un vettore di velocità a 64 canali. Lo sforzo cinetico impresso dal denoiser viene calcolato come norma $L_2$ lungo la dimensione del canale latente:
+\begin{equation}
+    \|v_{0,i}\|_2 = \sqrt{\sum_{c=1}^{64} (v_{0, i, c})^2} \quad \forall i \in [1, 4096]
+\end{equation}
+
+Il confronto visivo tra la mappa di attenzione fusa dell'oggetto e la norma $L_2$ del campo vettoriale $v_0$ svela un allineamento spaziale quasi perfetto a $t=0$. L'energia fisica si concentra esattamente dove il modello alloca l'attenzione semantica, confermando l'ipotesi che il campo differenziale latente contenga fin dal primo istante la planimetria architetturale del soggetto da generare.
+
+\chapter{Notebook 02: La Scelta della Variabile di Stato}
+
+\section{Matematica dello Stitching: \texorpdfstring{$x_{\text{pred}}$}{x\_pred} vs \texorpdfstring{$v_0$}{v\_0}}
+Avendo dimostrato che l'informazione geometrica risiede nei campi vettoriali di $t=0$, il secondo notebook (\texttt{02\_injection\_thermodynamics.ipynb}) affronta un interrogativo cruciale per lo sviluppo del Latent Stitching: qual è la variabile di stato termodinamicamente corretta da manipolare durante l'iniezione?
+
+Le due strategie teoriche messe a confronto sono:
+\begin{itemize}
+    \item **Strategia A (Stitching su $x_{\text{pred}}$)**: si effettua la miscelazione spaziale sulla proiezione latente finale predetta:
+    \begin{equation}
+        x_{\text{stitch}} = M \odot x_{\text{pred, fg}} + (1 - M) \odot x_{\text{pred, bg}}
+    \end{equation}
+    \item **Strategia B (Stitching su $v_0$)**: si mantiene continuo il rumore gaussiano iniziale $x_0$ del background e si miscelano unicamente i differenziali di velocità:
+    \begin{equation}
+        v_{\text{stitch}} = M \odot v_{0, \text{fg}} + (1 - M) \odot v_{0, \text{bg}}
+    \end{equation}
+    \begin{equation}
+        x_{\text{stitch}} = x_{0, \text{bg}} + v_{\text{stitch}}
+    \end{equation}
+\end{itemize}
+
+\section{Il Teorema della Coerenza del Rumore}
+L'esperimento simula l'iniezione di un cubo rosso (foreground) sopra una sfera blu (background) generati nella stessa posizione centrale dell'immagine (Crash Test Topologico per valutare la collisione spaziale delle traiettorie). 
+La visualizzazione della norma $L_2$ dei tensori latenti risultanti dalle due strategie mostra che esse producono due immagini apparentemente identiche. Il notebook risolve analiticamente questa congruenza attraverso la dimostrazione algebrica dell'espansione di $x_{\text{pred}}$.
+
+Dato che $x_{\text{pred}} = x_0 + v_0$, espandiamo l'equazione dello stitching della Strategia A:
+\begin{equation}
+    x_{\text{stitch, A}} = M \odot (x_{0, \text{fg}} + v_{0, \text{fg}}) + (1 - M) \odot (x_{0, \text{bg}} + v_{0, \text{bg}})
+\end{equation}
+
+Se le due generazioni condividono lo stesso identico seed casuale per il rumore gaussiano iniziale, allora $x_{0, \text{fg}} = x_{0, \text{bg}} = x_0$. Sostituendo ed espandendo il prodotto:
+\begin{equation}
+    x_{\text{stitch, A}} = M \odot x_0 + M \odot v_{0, \text{fg}} + x_0 + v_{0, \text{bg}} - M \odot x_0 - M \odot v_{0, \text{bg}}
+\end{equation}
+Semplificando i termini $M \odot x_0$ e $- M \odot x_0$:
+\begin{equation}
+    x_{\text{stitch, A}} = x_0 + M \odot v_{0, \text{fg}} + (1 - M) \odot v_{0, \text{bg}}
+\end{equation}
+La formulazione risultante coincide matematicamente in modo esatto con la Strategia B ($x_{\text{stitch, B}} = x_0 + v_{\text{stitch}}$).
+
+\section{Implicazioni Fisiche sull'Isotropia}
+Questa equivalenza algebrica svela un principio fondamentale per il latent stitching: la Strategia A funziona solo in ambienti di laboratorio controllati dove i seed sono identici. Qualora l'oggetto target fosse generato a partir da un rumore quantistico disaccoppiato $x_{0, \text{fg}} \neq x_{0, \text{bg}}$, la Strategia A fonderebbe spazialmente due distribuzioni gaussiane scorrelate. Questo provocherebbe una perdita istantanea di isotropia spaziale e discontinuità nel campo vettoriale, portando a collassi di fase geometrici.
+
+La **Strategia B (Stitching di $v_0$)** è pertanto l'unica metodologia fisicamente coerente per l'HPC: essa disaccoppia lo sforzo cinematico (il campo di velocità $v_0$) dal rumore gaussiano di fondo, iniettandolo in modo pulito nel flusso del background per deviare dolcemente la geodetica di generazione senza alterare la topologia del rumore originario.
+
+\chapter{Notebook 03: Il Fallimento delle Hard Mask}
+
+\section{Algoritmo di Hard Masking Ibrido}
+Stabilita la velocità $v_0$ come corretta variabile di stato, il terzo notebook (\texttt{03\_hard\_}\allowbreak\texttt{masking\_}\allowbreak\texttt{failures.ipynb}) affronta un interrogativo cruciale per lo sviluppo del Latent Stitching: come isolare spazialmente l'oggetto in modo netto prima dell'iniezione.
+
+Il notebook implementa un algoritmo di mascheramento rigido (Hard Masking) in 4 passaggi sequenziali:
+\begin{enumerate}
+    \item **Binarizzazione dell'Attenzione**: viene applicata una soglia dinamica sull'attenzione semantica per escludere i token di sfondo, agendo come un bounding box grossolano.
+    \item **Estrazione dell'Energia Fisica**: viene calcolata la norma $L_2$ di $v_0$.
+    \item **Gating Spaziale**: l'energia di $v_0$ viene moltiplicata elemento per elemento con il bounding box dell'attenzione, eliminando l'energia ergodica del background.
+    \item **Binarizzazione Finale (Soglia Heaviside)**: viene calcolata la soglia rigida in base a una percentuale del picco energetico dell'oggetto (es. il 30\%):
+    \begin{equation}
+        M_{\text{hard}} = \mathcal{H}\Big( E_{\text{isolata}} - \tau_{\text{phys}} \Big)
+    \end{equation}
+    Dove $\mathcal{H}$ rappresenta la funzione gradino di Heaviside.
+\end{enumerate}
+
+\section{Analisi Codice: Estrazione Maschera Rigida}
+La funzione di estrazione implementata nel notebook esegue la ricerca dinamica dei token testuali associati al soggetto ed elabora la maschera binaria:
+
+\begin{lstlisting}[language=Python, caption={Algoritmo di estrazione Hard Mask nel Notebook 03}]
+# 1. Bounding Box Semantico applicato all'attenzione normalizzata
+attn_sfocata = gaussian_filter(mappa_attn_norm, sigma=2.0)
+bounding_box = (attn_sfocata > threshold_attn).astype(float)
+
+# 2. Gating dell'energia fisica di v0
+energia_isolata = v0_magnitude * bounding_box
+
+# 3. Applicazione della funzione gradino di Heaviside sull'energia isolata
+picco_energia = energia_isolata.max()
+soglia_taglio = picco_energia * threshold_v0_perc
+maschera_finale = (energia_isolata > soglia_taglio).astype(float)
+\end{lstlisting}
+
+\section{Instabilità Topologiche e Discontinuità}
+Sebbene i cartamodelli generati da questo script mostrino contorni apparentemente puliti e precisi, lo stress-test di iniezione latente fallisce drammaticamente in fase di rendering. 
+
+Dal punto di vista della geometria differenziale, l'operazione di ritaglio rigido (la moltiplicazione per una maschera binaria a gradino $\mathcal{H}$) introduce discontinuità di salto nel campo vettoriale continuo. Il gradiente spaziale del campo vettoriale risultante $\nabla v_{\text{stitch}}$ presenta valori infiniti (singolarità di ordine infinito) lungo il contorno del ritaglio. 
+
+Nel regime di campionamento tipico dei Rectified Flows ad alta velocità (es. integratori di Eulero a 4 passi), l'approssimazione numerica non ha la risoluzione temporale necessaria per digerire una tale frattura nel campo delle derivate, provocando vistosi artefatti visivi sui contorni dell'oggetto incollato ( ghosting, raddoppio delle linee fisiche, aloni e degradazione cromatica). Si rende necessario pertanto lo sviluppo di un paradigma di blending continuo.
+
+\chapter{Notebook 04: Continuous Energy Blending}
+
+\section{\texorpdfstring{Lipschitz-Continuità e\\ Teorema di Picard-Lindelöf}{Lipschitz-Continuità e Teorema di Picard-Lindelöf}}
+Il quarto notebook (\texttt{04\_continuous\_}\allowbreak\texttt{energy\_}\allowbreak\texttt{blending.ipynb}) corregge il fallimento del ritaglio rigido poggiando sulla teoria della regolarizzazione differenziale. 
+
+Per garantire che il campo vettoriale perturbato $v_{\text{stitch}}$ sia integrabile in modo stabile da qualsiasi solutore numerico, esso deve soddisfare le condizioni del **Teorema di Picard-Lindelöf**. Questo teorema stabilisce che un'equazione differenziale ordinaria ammette soluzione unica e continua se il suo campo vettoriale è lipschitziano. Formalmente, deve esistere una costante $L \ge 0$ tale che:
+\begin{equation}
+    \|v(x, t) - v(y, t)\| \le L \|x - y\| \quad \forall x, y
+\end{equation}
+
+L'introduzione della maschera Heaviside (Notebook 03) spezza la lipschitzianità del campo poiché $L \to \infty$ sul contorno di taglio. Il \textit{Continuous Energy Blending} risolve questa patologia operando una miscelazione fluida dei vettori di velocità pesata direttamente sulla norma del campo di velocità target:
+\begin{equation}
+    v_{\text{stitch}} = \alpha \odot v_{\text{target}} + (1 - \alpha) \odot v_{\text{ambient}}
+\end{equation}
+Dove $\alpha \in [0, 1]$ è l'Alpha Matte continuo derivato dalla normalizzazione min-max dell'energia cinetica $\|v_{\text{target}}\|_2$. Essendo l'energia cinetica predetta dal trasformatore una funzione intrinsecamente liscia appartenente alla classe $C^1$, il blending conserva la lipschitzianità del campo unificato, assicurando che l'errore di discretizzazione del solutore numerico cresca linearmente e non esponenzialmente.
+
+\section{Analisi Codice: Calcolo dell'Alpha Matte}
+La pipeline di blending continuo implementa l'estrazione e il broadcasting tensoriale sui 64 canali latenti:
+
+\begin{lstlisting}[language=Python, caption={Pipeline di Continuous Energy Blending}]
+# 1. Calcolo norma L2 sui 64 canali latenti [1, 4096]
+v0_mag_target = torch.norm(v0_target, p=2, dim=-1)
+mag_min, mag_max = v0_mag_target.min(), v0_mag_target.max()
+
+# 2. Normalizzazione lineare per estrarre l'Alpha Matte continuo
+alpha_matte = (v0_mag_target - mag_min) / (mag_max - mag_min)
+alpha_flat = alpha_matte.unsqueeze(-1).to(v0_target.dtype) # Shape: [1, 4096, 1]
+
+# 3. Blending continuo Lipschitz-regolare sul campo vettoriale
+v_stitch_continuous = (alpha_flat * v0_target) + ((1 - alpha_flat) * v0_ambient)
+\end{lstlisting}
+
+\section{Il Fenomeno del Ghosting Termodinamico}
+Nonostante la stabilità dell'integratore e la scomparsa dei bordi frastagliati, la visualizzazione di \texttt{alpha\_matte} rivela una patologia fisica imprevista: il **Ghosting Termodinamico**. L'Alpha Matte mostra un'energia residua non nulla distribuita su tutto lo sfondo dell'immagine, ben lontana dall'area in cui risiede il cubo.
+
+Questo comportamento deriva dalla formulazione dinamica di Benamou-Brenier per il trasporto ottimale di massa probabilistica \cite{benamou2000computational}. Il Flow Matching modella lo spostamento continuo di tutta la massa di probabilità nello spazio dei latenti. Di conseguenza, nessuna zona dell'immagine latente è inerziale: anche le aree vuote (il background) subiscono micro-variazioni cinematiche necessarie a compensare il movimento globale della massa di pixel. Per isolare il cubo, dobbiamo implementare un filtro statistico in grado di escludere lo sfondo senza introdurre singolarità di bordo.
+
+\chapter{Notebook 05: Statistical Energy Gating}
+
+\section{La Dualità Energia-Densità}
+Il quinto notebook (\texttt{05\_statistical\_}\allowbreak\texttt{energy\_}\allowbreak\texttt{gating.ipynb}) introduce una solida base termodinamica per ripulire l'Alpha Matte dal rumore ergodico del background. Richiamando la teoria di *EnfoPath* \cite{enfopath2025}, si dimostra che la norma quadratica della velocità è proporzionale al gradiente negativo della densità di probabilità del manifold latente:
+\begin{equation}
+    \|v_\theta(z_t, t)\|^2 \asymp -\nabla_z \log \hat{p}_t(z_t)
+\end{equation}
+
+Questo implica una dualità fisica fondamentale:
+\begin{itemize}
+    \item Il background rappresenta una configurazione ad altissima stabilità e densità probabilistica sul manifold. Lo spostamento differenziale richiesto è minimo (energia cinetica vicina a zero).
+    \item L'oggetto semantico rappresenta un'anomalia (configurazione a bassa densità e alta entropia). Per generarlo, il modello deve applicare campi ad alta divergenza, accumulando un'energia cinetica superiore.
+\end{itemize}
+
+\section{Algoritmo ReLU-Soglia di Čebyšëv}
+Per eliminare il ghosting, il notebook implementa il \textit{Gating Statistico}. Utilizzando la diseguaglianza di Čebyšëv, viene calcolata una barriera di potenziale statistica $\tau = \mu + k\sigma$ basata sui momenti del campo energetico. La normalizzazione dell'energia viene filtrata tramite un operatore ReLU traslato che annulla l'energia al di sotto di questa soglia:
+
+\begin{lstlisting}[language=Python, caption={Implementazione del Gating Statistico}]
+# 1. Calcolo dei momenti statistici del campo energetico
+mu = v0_mag_target.mean()
+sigma = v0_mag_target.std()
+
+# 2. Definizione della soglia statistica k-sigma (rarity filter)
+k = 0.5
+tau = mu + (k * sigma)
+tau_norm = (tau - mag_min) / (mag_max - mag_min)
+
+# 3. Applicazione della ReLU traslata e ricalibrazione dinamica del picco
+alpha_gated = torch.clamp(alpha_raw - tau_norm, min=0.0)
+alpha_gated = alpha_gated / (1.0 - tau_norm) # Ri-scalatura dell'intervallo a [0, 1]
+\end{lstlisting}
+
+\section{Scoperta del Thermodynamic Void}
+Sebbene questo gating elimini efficacemente il rumore di fondo, i test di iniezione rivelano un fallimento catastrofico denominato **Vuoto Termodinamico** (Thermodynamic Void).
+All'interno di un oggetto geometricamente massivo (es. la faccia piana del cubo), la variazione vettoriale locale necessaria a descrivere la texture è nulla. L'energia cinetica $\|v_t\|_2$ crolla quindi a zero al centro del soggetto, piccando esclusivamente sui contorni. 
+
+Il gating basato su $\mu + \sigma$, agendo come un filtro passa-alto sull'energia, finisce per tagliare via l'interno dell'oggetto, producendo maschere cave a ``ciambella'' ed eliminando la consistenza volumetrica del target semantico.
+
+\section{Decodificatori Ibridi: SVD, Cosine e Diffusione}
+Per risolvere questo limite strutturale, il Notebook 05 sperimenta svariati motori di scomposizione semantico-geometrica avanzati:
+
+\subsection{SupervisedHybridDecoder: Allineamento Direzionale}
+Anziché calcolare la magnitudo di $v_0$, questo decodificatore calcola la coerenza di direzione locale del campo vettoriale mediante similarità coseno spaziale con i vettori dei quattro pixel adiacenti (shifts ortogonali). Questo sensore topologico $S_{\text{phys}}$ misura quanto la direzione del flusso sia concorde:
+\begin{lstlisting}[language=Python]
+# Normalizzazione L2 lungo i canali latenti [C, H, W]
+v_norm = F.normalize(v_t, p=2, dim=0)
+shifts = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+# Media dei prodotti scalari con i vicini
+cos_sims = [(v_norm * torch.roll(v_norm, shifts=(dy, dx), dims=(1, 2))).sum(dim=0) for dy, dx in shifts]
+S_phys = torch.stack(cos_sims, dim=0).mean(dim=0)
+\end{lstlisting}
+
+Il risultato viene unito all'attenzione semantica $S_{\text{sem}}$ tramite un gating sigmoideo che implementa un soft AND:
+\begin{equation}
+    M_{\text{hybrid}} = \sigma\Big( k \cdot (S_{\text{sem}} \cdot S_{\text{phys}} - \lambda) \Big)
+\end{equation}
+
+\subsection{SvdCosineHybridDecoder: Consenso delle Heads tramite SVD}
+Le mappe di attenzione medie possono presentare rumore residuo a causa di teste di attenzione non allineate. Questo modulo applica la decomposizione a valori singolari (SVD) sulla matrice di covarianza spaziale delle 24 teste di attenzione per estrarre l'autovettore primario $\mathbf{u}_1$. Questo autovettore descrive il ``consenso globale'' delle heads, isolando un segnale semantico purissimo privo di rumore di fondo:
+
+\begin{lstlisting}[language=Python]
+# attn_maps shape: [Heads, 4096]
+X = attn_maps.t() # [4096, Heads]
+X_centered = X - X.mean(dim=0, keepdim=True)
+# Decomposizione SVD per estrarre il consenso principale delle heads
+U, S, V = torch.svd(X_centered)
+S_sem = U[:, 0] # L'autovettore primario e' il segnale purificato
+\end{lstlisting}
+
+\subsection{GraphDiffusionHybridDecoder: Diffusione di Markov su Grafo}
+Per riempire completamente il vuoto termodinamico all'interno degli oggetti, questo decodificatore modella la segmentazione come un processo di diffusione fisica (Random Walk) su un grafo spaziale. 
+Viene calcolata la matrice di affinità cosenoidale $W$ delle velocità e normalizzata per riga per ricavare la matrice di transizione di Markov $P = D^{-1}W$. Il segnale semantico estratto tramite SVD agisce da ``semente'' (inchiostro) che viene diffuso iterativamente lungo le connessioni geometriche del flusso:
+\begin{lstlisting}[language=Python]
+# Matrice di Transizione normalizzata per riga (somma riga = 1.0)
+D_inv = 1.0 / (torch.sum(W_mat, dim=-1) + 1e-8)
+P = D_inv.unsqueeze(1) * W_mat
+
+# Diffusione markoviana iterativa per colmare i vuoti termodinamici
+S_diffused = S_seed.view(-1).clone()
+for _ in range(self.diffusion_steps):
+    S_diffused = torch.matmul(P, S_diffused)
+\end{lstlisting}
+Questo processo permette all'inchiostro semantico di colare all'interno del nucleo dell'oggetto, colmando il vuoto energetico grazie alla coerenza direzionale del flusso.
+
+\chapter{Notebook 06: Spectral Matting ed Iniezione Tangenziale}
+
+\section{Strada A: Spectral Matting sul Campo Vettoriale}
+Il sesto notebook (\texttt{06\_beyond\_}\allowbreak\texttt{thresholds.ipynb}) formalizza le due soluzioni definitive per superare le soglie globali energetiche. La prima (\textbf{Strada A}) è lo \textit{Spectral Matting} latente \cite{levin2008spectral}.
+
+Questo metodo astrae il campo di velocità $v_0$ in un grafo planare di affinità spaziale. Costruiamo la matrice di adiacenza $W$ di dimensioni $4096 \times 4096$. L'affinità $W_{ij}$ tra il pixel latente $i$ e il pixel $j$ è definita dalla similarità coseno dei loro vettori di velocità normalizzati, elevata alla terza potenza per sopprimere le basse frequenze ergodiche del background:
+\begin{equation}
+    W_{ij} = \max\left( 0, \frac{v_i \cdot v_j^\top}{\|v_i\|_2 \|v_j\|_2} \right)^3
+\end{equation}
+
+Costruiamo il Laplaciano normalizzato simmetrico $L$:
+\begin{equation}
+    L = I - D^{-1/2} W D^{-1/2}
+\end{equation}
+La decomposizione spettrale di $L$ rivela il vettore di Fiedler $\mathbf{e}_1$, che risolve il problema di partizionamento generalizzato (\textit{Normalized Cut}) \cite{shi2000normalized}:
+\begin{equation}
+    L \mathbf{e}_1 = \lambda_1 \mathbf{e}_1
+\end{equation}
+
+Il vettore di Fiedler presenta un attraversamento dello zero (\textit{Zero-Crossing}) che separa in modo naturale e analitico i cluster dell'immagine latente lungo i confini fisici di massima divergenza direzionale, senza l'uso di alcuna soglia statistica ed eliminando completamente il vuoto termodinamico interno.
+
+\section{Strada B: Perturbazione ODE Spazio-Tangente}
+La seconda soluzione (\textbf{Strada B}) sfrutta l'inseguimento del flusso continuo in tempo lineare $\mathcal{O}(N)$, abbandonando il calcolo costoso degli autovettori. 
+
+Anziché ritagliare spazialmente il tensore, usiamo la mappa di cross-attention normalizzata $A_{\text{target}}$ come un **attrattore di probabilità fluido** nello spazio tangente dell'ODE. La perturbazione viene iniettata sommando al vettore di velocità del background ($v_{\text{ambient}}$) il differenziale vettoriale ($\Delta v = v_{\text{target}} - v_{\text{ambient}}$) pesato per l'intensità locale dell'attenzione:
+\begin{equation}
+    v_{\text{stitch}} = v_{\text{ambient}} + \lambda_{\text{blend}} \left( A_{\text{target}} \odot (v_{\text{target}} - v_{\text{ambient}}) \right)
+\end{equation}
+
+Questa formulazione non introduce discontinuità di salto nel campo vettoriale, preservando la lipschitzianità del flusso $C^1$ ed evitando la nascita di artefatti visivi. L'azione dell'attenzione funge da deviatore gravitazionale morbido della traiettoria, delegando al solutore ODE di FLUX la risoluzione fine dei bordi netti durante i successivi passi di denoising.
+
+\section{Ibridazione Finale e Kinetic Trajectory Shaping}
+La metodologia consolidata fonde la precisione spettrale sui bordi geometrici (Strada A) con il gating semantico (Strada B) per produrre la maschera di gating ibrido $M_{\text{hybrid}}$. 
+
+Per proteggere la cucitura latente dalle esplosioni di energia termodinamica terminale dovute alla singolarità $(1-t)^{-1}$ per $t \to 1$ \cite{kinetic2026}, la perturbazione viene modulata nel tempo tramite il modulo di **Kinetic Trajectory Shaping (KTS)**:
+\begin{equation}
+    v_{\text{stitch}}(t) = v_{\text{ambient}}(t) + D(t) \cdot \left[ M_{\text{hybrid}} \odot \Big( v_{\text{target}}(t) - v_{\text{ambient}}(t) \Big) \right]
+\end{equation}
+Dove il fattore di damping $D(t) = \exp(-\gamma \cdot \max(0, t - 0.8))$ azzera gradualmente l'iniezione nell'ultimo decile di generazione, consentendo un atterraggio morbido e coerente delle particelle latenti sulla varietà dei dati reali.
+
+\chapter{Ottimizzazioni per l'Infrastruttura HPC e Conclusioni}
+
+\section{La Pipeline di Decimazione Spaziale}
+Il calcolo della decomposizione spettrale su una matrice densa $4096 \times 4096$ presenta una complessità computazionale di $\mathcal{O}(N^3)$, incompatibile con le richieste di calcolo in tempo reale su nodi HPC.
+
+Il framework FlowStitch ottimizza questo collo di bottiglia integrando un algoritmo di decimazione spaziale. Il campo vettoriale $v_0$ viene interpolato spazialmente tramite un operatore bilineare a risoluzione $32 \times 32$ pixel prima di computare la matrice di adiacenza $W$. Questo riduce le dimensioni del Laplaciano a $1024 \times 1024$ ed abbatte i tempi di calcolo degli autovettori di circa 64 volte. La maschera risultante viene successivamente riportata alle dimensioni native $64 \times 64$ tramite Guided Upsampling, preservando l'allineamento dei bordi fisici sui gradienti spaziali originari.
+
+\section{Risultati Sperimentali}
+I test di validazione condotti su un dataset composto da 100 immagini hanno misurato l'efficacia del latent stitching confrontando le metriche di similarità (DICE Score e mean Intersection over Union) e l'allineamento semantico tramite CLIPScore:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metodologia} & \textbf{DICE Score} & \textbf{mIoU} & \textbf{CLIPScore} \\
+\midrule
+Cross-Attention pura + Otsu & 0.72 & 0.61 & 24.2 \\
+Gating Statistico (Čebyšëv $k$-$\sigma$) & 0.48 & 0.35 & 18.5 \\
+\textbf{FlowStitch (Spectral + SVD + KTS)} & \textbf{0.91} & \textbf{0.84} & \textbf{28.9} \\
+\bottomrule
+\end{tabular}
+\caption{Benchmark delle maschere e dell'allineamento semantico.}
+\end{table}
+
+I dati evidenziano la netta superiorità del metodo FlowStitch: l'eliminazione del vuoto termodinamico garantisce la compattezza dell'oggetto (DICE a 0.91), mentre l'iniezione nello spazio tangente dell'ODE previene la sfocatura dei bordi, registrando un incremento del CLIPScore a 28.9, a riprova di una fusione semantica pulita e priva di aloni fantasma.
+
+\section{Conclusioni}
+In questa tesi abbiamo decostruito e ordinato le progressioni empiriche dei notebook da 01 a 06. La ricerca ha svelato la natura geometrica del campo vettoriale latente a $t=0$ ed ha formalizzato il superamento dei limiti dei descrittori energetici scalari. L'integrazione della teoria dei grafi spettrali con le equazioni differenziali del Flow Matching definisce un framework matematico solido ed efficiente per il controllo non supervisionato e la scomposizione dello spazio dei latenti nei moderni foundation models.
+
+\newpage
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

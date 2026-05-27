@@ -22,3 +22,14 @@ venv*/
 # Mac 
 .DStore
 .DS_Store
+
+*.aux
+*.bbl
+*.log
+*.out
+*.toc
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+

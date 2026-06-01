@@ -20,8 +20,12 @@ venv*/
 .ipynb_checkpoints
 
 # Mac 
-.DStore
 .DS_Store
+
+# Build artifacts
+flowstitch.egg-info/
+dist/
+build/
 
 *.aux
 *.bbl

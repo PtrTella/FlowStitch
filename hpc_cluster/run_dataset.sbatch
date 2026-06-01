@@ -14,4 +14,4 @@ export PYTHONUNBUFFERED=1
 
 # Python
 source .venv_hpc/bin/activate
-python hpc_cluster/flux_dataset_generator.py
+python hpc_cluster/run_dataset.py

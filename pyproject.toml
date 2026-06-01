@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flowstitch"
+version = "0.1.0"
+description = "Unsupervised latent decomposition and stitching in Flow Matching models (FLUX.1)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Pietro Tellarini"}
+]
+dependencies = [
+    "torch>=2.4.1",
+    "diffusers>=0.30.3",
+    "transformers>=4.44.2",
+    "accelerate>=0.34.2",
+    "torchvision>=0.19.1",
+    "sentencepiece",
+    "protobuf",
+    "safetensors",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "ripser",
+    "persim"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jupyter",
+    "ipykernel"
+]
+hpc = [
+    "bitsandbytes"
+]
+
+[tool.setuptools.packages.find]
+include = ["flowstitch", "flowstitch.*"]

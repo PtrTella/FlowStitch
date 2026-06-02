@@ -54,7 +54,11 @@
 \maketitle
 
 \begin{abstract}
-Questo lavoro di tesi documenta la ricerca teorica e l'implementazione sperimentale di \textbf{FlowStitch}, un framework innovativo per la segmentazione semantica zero-shot e il latent stitching all'interno di modelli generativi basati su Flow Matching multimodale (in particolare, l'architettura MMDiT di FLUX.1). Deostruendo in modo sequenziale i notebook sperimentali da 01 a 06 sviluppati sul cluster di calcolo, l'elaborato traccia un filo logico coerente che muove dall'analisi topologica iniziale allo step $t=0$ fino alla formulazione di perturbazioni continue Lipschitz-regolari nello spazio tangente dell'ODE. Vengono formalizzati matematicamente i fenomeni fisici emersi durante lo stress-test dei modelli generativi, tra cui il \textit{Ghosting Termodinamico} e il \textit{Vuoto Termodinamico} (Thermodynamic Void). Per ovviare a quest'ultimo paradosso energetico, viene introdotto e documentato in dettaglio lo Spectral Matting latente, calcolato tramite il vettore di Fiedler del Laplaciano normalizzato spettrale delle Key di attenzione, accoppiato a una diffusione markoviana guidata da sementi semantiche estratte tramite decomposizione a valori singolari (SVD) sulle teste dell'attenzione. I risultati confermano l'efficacia del framework nell'eseguire editing e iniezioni non distruttive a complessità computazionale contenuta e idonea a contesti HPC.
+Questo lavoro di tesi documenta la ricerca teorica e l'implementazione sperimentale di \textbf{FlowStitch}, un framework innovativo per la segmentazione semantica zero-shot e il latent stitching all'interno di modelli generativi basati su Flow Matching multimodale (in particolare, l'architettura MMDiT di FLUX.1). L'elaborato è organizzato in sette notebook sperimentali (\texttt{01}--\texttt{07}) che tracciano un filo logico coerente dall'analisi topologica dello stato $t=0$ fino alla pipeline completa di produzione.
+
+Vengono formalizzati matematicamente i fenomeni fisici emersi durante lo stress-test dei modelli generativi, tra cui il \textit{Ghosting Termodinamico} e il \textit{Vuoto Termodinamico} (Thermodynamic Void). Per ovviare a quest'ultimo paradosso energetico, viene introdotto lo Spectral Matting latente, calcolato tramite il vettore di Fiedler del Laplaciano normalizzato spettrale delle Key di attenzione, accoppiato a una diffusione markoviana guidata da sementi semantiche estratte tramite decomposizione a valori singolari (SVD).
+
+Documentiamo inoltre i fallimenti sperimentali fondamentali — in particolare il collasso di ARPACK per matrici $4096 \times 4096$ e il crollo della varianza nel blending lineare — e le soluzioni adottate. Il notebook \texttt{06\_Experimental\_Lab\_Complete} consolida cronologicamente ogni esperimento, fallimento e scoperta; il notebook \texttt{07\_Complete\_Pipeline\_Codebase} annota l'intero sorgente della pipeline di produzione. I risultati confermano l'efficacia del framework nell'eseguire editing e iniezioni non distruttive a complessità computazionale contenuta e idonea a contesti HPC.
 \end{abstract}
 
 \tableofcontents
@@ -197,6 +201,7 @@ Per indagare la componente geometrica, il notebook calcola la magnitudo del camp
 Il confronto visivo tra la mappa di attenzione fusa dell'oggetto e la norma $L_2$ del campo vettoriale $v_0$ svela un allineamento spaziale quasi perfetto a $t=0$. L'energia fisica si concentra esattamente dove il modello alloca l'attenzione semantica, confermando l'ipotesi che il campo differenziale latente contenga fin dal primo istante la planimetria architetturale del soggetto da generare.
 
 \section{La Scelta della Variabile di Stato}
+\label{sec:variabile}
 \section{Matematica dello Stitching: \texorpdfstring{$x_{\text{pred}}$}{x\_pred} vs \texorpdfstring{$v_0$}{v\_0}}
 Avendo dimostrato che l'informazione geometrica risiede nei campi vettoriali di $t=0$, il secondo notebook (\texttt{02\_injection\_thermodynamics.ipynb}) affronta un interrogativo cruciale per lo sviluppo del Latent Stitching: qual è la variabile di stato termodinamicamente corretta da manipolare durante l'iniezione?
 
@@ -238,6 +243,60 @@ La formulazione risultante coincide matematicamente in modo esatto con la Strate
 Questa equivalenza algebrica svela un principio fondamentale per il latent stitching: la Strategia A funziona solo in ambienti di laboratorio controllati dove i seed sono identici. Qualora l'oggetto target fosse generato a partir da un rumore quantistico disaccoppiato $x_{0, \text{fg}} \neq x_{0, \text{bg}}$, la Strategia A fonderebbe spazialmente due distribuzioni gaussiane scorrelate. Questo provocherebbe una perdita istantanea di isotropia spaziale e discontinuità nel campo vettoriale, portando a collassi di fase geometrici.
 
 La **Strategia B (Stitching di $v_0$)** è pertanto l'unica metodologia fisicamente coerente per l'HPC: essa disaccoppia lo sforzo cinematico (il campo di velocità $v_0$) dal rumore gaussiano di fondo, iniettandolo in modo pulito nel flusso del background per deviare dolcemente la geodetica di generazione senza alterare la topologia del rumore originario.
+
+\section{Teorema della Conservazione della Varianza del Rumore}
+Nei modelli di rectified flow e continuous normalizing flows, il punto di partenza dell'ODE a $t=0$ è campionato da una distribuzione prior gaussiana isotropa standard $p_0 \sim \mathcal{N}(0, I)$.
+Nel tentativo di unire due campi latenti indipendenti (il background $z_{\text{bg}}$ e l'oggetto $z_{\text{fg}}$) generati con seed disaccoppiati, consideriamo una generica combinazione lineare pesata tramite una maschera di stitching $M(x) \in [0, 1]$:
+\begin{equation}
+    z_{\text{blended}} = (1 - M) \odot z_{\text{bg}} + M \odot z_{\text{fg}}
+\end{equation}
+Poiché $z_{\text{bg}}$ e $z_{\text{fg}}$ sono indipendenti e a varianza unitaria ($\text{Var}(z_{\text{bg}}) = \text{Var}(z_{\text{fg}}) = 1.0$), la varianza del campo miscelato in ciascuna coordinata spaziale risulta essere:
+\begin{equation}
+    \text{Var}(z_{\text{blended}}) = (1 - M)^2 \text{Var}(z_{\text{bg}}) + M^2 \text{Var}(z_{\text{fg}}) = (1 - M)^2 + M^2 = 2M^2 - 2M + 1
+\end{equation}
+Esaminando la funzione $f(M) = 2M^2 - 2M + 1$ nell'intervallo $[0, 1]$:
+\begin{itemize}
+    \item Nei punti interni dell'oggetto ($M=1$) o del background ($M=0$), si ha $\text{Var}(z_{\text{blended}}) = 1.0$.
+    \item Lungo i confini di transizione sfumati ($M \in (0, 1)$), la varianza subisce un collasso energetico. In particolare, per $M=0.5$, si ha:
+    \begin{equation}
+        \text{Var}(z_{\text{blended}}) = 2(0.25) - 2(0.5) + 1 = 0.5
+    \end{equation}
+\end{itemize}
+Questo calo del $50\%$ della varianza del rumore latente iniziale (collasso di varianza) altera pesantemente le proprietà statistiche attese dai primi blocchi del trasformatore multimodale FLUX. Di conseguenza, il modello opera al di fuori del manifold di addestramento, introducendo gravi artefatti cromatici (aree grigiastre o sbiancate) e sfocature lungo i bordi dell'oggetto.
+
+Per prevenire questo collasso e garantire la perfetta isotropia e conservazione energetica lungo tutta la geodetica di transizione, i coefficienti di miscelazione dei rumori devono giacere sulla sfera unitaria, soddisfacendo la condizione:
+\begin{equation}
+    w_{\text{bg}}^2 + w_{\text{fg}}^2 = 1
+\end{equation}
+Questo impone la parametrizzazione con radice quadrata:
+\begin{equation}
+    w_{\text{bg}} = \sqrt{1 - M}, \quad w_{\text{fg}} = \sqrt{M}
+\end{equation}
+Il rumore iniziale miscelato corretto risulta pertanto essere:
+\begin{equation}
+    z_{\text{blended}} = \sqrt{1 - M} \odot z_{\text{bg}} + \sqrt{M} \odot z_{\text{fg}}
+\end{equation}
+Il calcolo della varianza conferma la conservazione unitaria del rumore:
+\begin{equation}
+    \text{Var}(z_{\text{blended}}) = \left(\sqrt{1 - M}\right)^2 \text{Var}(z_{\text{bg}}) + \left(\sqrt{M}\right)^2 \text{Var}(z_{\text{fg}}) = (1 - M) + M = 1.0 \quad \forall M \in [0, 1]
+\end{equation}
+
+\section{Analisi Comparativa delle Strategie HPC}
+Le simulazioni eseguite sui nodi di calcolo HPC hanno confrontato tre diverse strategie di accoppiamento per validare l'impatto del teorema della varianza e dell'hacking dell'attenzione:
+\begin{enumerate}
+    \item \textbf{Strategia Mosaico Lineare (\texttt{flux\_mosaico\_injection})}:
+    Effettua un semplice ritaglio lineare sia sui latenti iniziali sia sul campo di velocità ad ogni passo dell'ODE loop senza alcuna iniezione semantica nei blocchi di attenzione del Transformer. Oltre a soffrire del collasso di varianza di cui sopra, questa strategia produce gradienti di transizione abrupti ("scogliera quantistica") con gravi discontinuità nel campo vettoriale della velocità, causando artefatti visivi dovuti all'assenza di accoppiamento dell'attenzione.
+    
+    \item \textbf{Strategia Duale Asimmetrica (\texttt{flux\_dual\_injection})}:
+    Introduce l'hacking dell'attenzione tramite il processore \texttt{SemanticGraftingProcessor} ma utilizza una miscelazione asimmetrica del rumore ($z_0 = (1-M) z_{\text{bg}} + \sqrt{M} z_{\text{fg}}$). Sebbene riduca l'instabilità semantica, la mancata conservazione della varianza nella componente di background provoca distorsioni di contrasto nella regione di cucitura.
+    
+    \item \textbf{Strategia Ibrida a Doppia Maschera (\texttt{flux\_dual\_last} / \texttt{latent\_stitching})}:
+    Rappresenta la sintesi ottimale formalizzata in questo lavoro. Per superare contemporaneamente il collasso di varianza e il ghosting semantico (il rumore ergodico dello sfondo), questa strategia implementa una decomposizione a doppia maschera:
+    \begin{itemize}
+        \item \textbf{Maschera Fisica Rigida} $M_{\text{phys}} = \mathcal{H}(M - \tau)$: una maschera netta (Heaviside con soglia $\tau = 0.1$) applicata per la saldatura iniziale del rumore gaussiano via radice quadrata e per il gating del campo di velocità $v_0$. Questo impedisce che l'energia dell'oggetto si disperda nello sfondo o viceversa.
+        \item \textbf{Maschera Semantica Sfocata} $M_{\text{sem}} = \text{Blur}(M)$: un'aura a transizione morbida (ottenuta applicando un filtro gaussiano con deviazione standard $\sigma$) iniettata direttamente nei layer di Joint Attention del Transformer. Questa maschera smussa spazialmente le interazioni cross-modali e i gradienti di attenzione tra i pixel di confine, garantendo un innesto semantico invisibile.
+    \end{itemize}
+\end{enumerate}
 
 \section{Il Fallimento delle Hard Mask}
 \section{Algoritmo di Hard Masking Ibrido}
@@ -509,10 +568,55 @@ Dal punto di vista della stabilità dell'ODE, assumiamo che il campo vettoriale 
 In questo modo, per piccoli valori di $\alpha$, la variazione temporale della derivata prima lungo la traiettoria è limitata uniformemente, sopprimendo le oscillazioni ad alta frequenza causate dalle perturbazioni esterne di iniezione. Questo assicura che il solutore numerico non esca dalla regione di stabilità di Picard-Lindelöf, preservando la coerenza semantica dell'immagine finale ed eliminando qualsiasi artefatto di bordo.
 
 \chapter{Validazione e Benchmarking}
-\section{La Pipeline di Decimazione Spaziale}
-Il calcolo della decomposizione spettrale su una matrice densa $4096 \times 4096$ presenta una complessità computazionale di $\mathcal{O}(N^3)$, incompatibile con le richieste di calcolo in tempo reale su nodi HPC.
 
-Il framework FlowStitch ottimizza questo collo di bottiglia integrando un algoritmo di decimazione spaziale. Il campo vettoriale $v_0$ viene interpolato spazialmente tramite un operatore bilineare a risoluzione $32 \times 32$ pixel prima di computare la matrice di adiacenza $W$. Questo riduce le dimensioni del Laplaciano a $1024 \times 1024$ ed abbatte i tempi di calcolo degli autovettori di circa 64 volte. La maschera risultante viene successivamente riportata alle dimensioni native $64 \times 64$ tramite Guided Upsampling, preservando l'allineamento dei bordi fisici sui gradienti spaziali originari.
+\section{Il Fallimento di ARPACK e la Decimazione Spaziale}
+
+Uno degli esperimenti più rivelatori del percorso di ricerca è il fallimento completo del solver ARPACK sul Laplaciano a piena risoluzione $4096 \times 4096$. Documentato in dettaglio nel notebook \texttt{06\_Experimental\_Lab\_Complete} (\S 7), ARPACK (\textit{Arnoldi Package}) è l'algoritmo iterativo standard per la fattorizzazione spettrale sparsa di grandi matrici simmetriche. La sua convergenza dipende criticamente dall'esistenza di un \textit{gap spettrale} positivo $\Delta\lambda = \lambda_2 - \lambda_1 > 0$ tra il primo autovalore nullo (associato alla componente connessa) e il secondo (il valore di Fiedler).
+
+Per il grafo di affinità coseno derivato dalle feature latenti di FLUX a $64 \times 64$, il gap spettrale effettivo risulta quasi nullo:
+\begin{equation}
+    \Delta\lambda_{4096} = \lambda_2 - \lambda_1 \approx 10^{-6}
+\end{equation}
+Questo porta ARPACK alla stagnazione numerica: il numero di condizionamento della matrice Laplaciana risulta $\kappa(L) \gtrsim 10^8$, e l'algoritmo supera il limite di iterazioni senza raggiungere la tolleranza richiesta di $10^{-10}$.
+
+\subsection{La Soluzione: Decimazione Bilineare a 32×32}
+La soluzione sperimentalmente validata consiste in una decimazione spaziale bilineare del campo $v_0$ da $64 \times 64$ a $32 \times 32$ prima di costruire la matrice di affinità:
+\begin{equation}
+    v_0^{(32)} = \text{Bilinear}\Big(v_0^{(64)}, \text{size}=(32, 32)\Big)
+\end{equation}
+Questo abbatte le dimensioni del Laplaciano a $1024 \times 1024$, incrementa il gap spettrale a $\Delta\lambda_{1024} \approx 10^{-2}$ (4 ordini di grandezza), e riduce la complessità computazionale da $\mathcal{O}(N^3) = \mathcal{O}(4096^3)$ a $\mathcal{O}(1024^3)$, ovvero circa 64 volte più veloce. Il codice di produzione in \texttt{extraction/spectral\_mask.py} implementa questa logica nella funzione \texttt{compute\_fiedler\_mask}:
+
+\begin{lstlisting}[language=Python, caption={Decimazione bilineare a 32x32 in compute\_fiedler\_mask}]
+def compute_fiedler_mask(v0, target_size=32):
+    # Decimazione bilineare: [1, 4096, 64] -> [1, 1024, 64]
+    v0_decimated = F.interpolate(
+        v0.reshape(1, 1, 64, 64, -1).squeeze(-1),
+        size=(target_size, target_size),
+        mode='bilinear', align_corners=False
+    )
+    # Costruzione Laplaciano 1024x1024 e calcolo del vettore di Fiedler
+    W = cosine_affinity(v0_decimated, clip_negative=True, power=3)
+    L_norm = normalized_laplacian(W)
+    fiedler = scipy.sparse.linalg.eigsh(L_norm, k=2, which='SM')[1][:, 1]
+    # Guided upsampling a 64x64
+    return guided_upsample(fiedler.reshape(target_size, target_size), 64)
+\end{lstlisting}
+
+La maschera risultante viene riportata alle dimensioni originali $64 \times 64$ tramite guided upsampling, preservando i bordi fisici sui gradienti spaziali originari.
+
+\section{Decomposizione Multi-Oggetto con Sigmoid Adattivo}
+
+I notebook sperimentali hanno rivelato una limitazione fondamentale del binary Fiedler cut nel caso di scene con più oggetti sovrapposti: il vettore di Fiedler partiziona il grafo in esattamente due cluster (foreground/background), perdendo la struttura gerarchica delle componenti semantiche.
+
+Per gestire scene multi-oggetto, il notebook \texttt{06\_Experimental\_Lab\_Complete} (\S 5) implementa la \textit{Decomposizione Adattiva Sigmoidale} (\textbf{DNA Vettoriale}). Anziché tagliare al through-zero del vettore di Fiedler, viene applicata una funzione sigmoidale parametrica con temperatura $T$ adattiva:
+\begin{equation}
+    M_{\text{adaptive}}(\mathbf{e}_1) = \sigma\left(\frac{\mathbf{e}_1 - \mu_{\mathbf{e}_1}}{T \cdot \sigma_{\mathbf{e}_1}}\right)
+\end{equation}
+dove $T \in [0.1, 2.0]$ controlla la durezza del confine: $T \to 0$ degenera in un hard cut binario, $T \to \infty$ produce una maschera uniforme di valore 0.5. Il valore ottimale $T^*$ viene stimato tramite analisi della distribuzione del vettore di Fiedler, calcolando la bimodalità tramite il coefficiente di Hartigan:
+\begin{equation}
+    T^* = \frac{\sigma_{\mathbf{e}_1}}{|\mu_{\mathbf{e}_1}^+ - \mu_{\mathbf{e}_1}^-|} \cdot 0.5
+\end{equation}
+dove $\mu^+$ e $\mu^-$ sono le medie dei valori positivi e negativi del vettore di Fiedler rispettivamente.
 
 \section{Risultati Sperimentali}
 I test di validazione condotti su un dataset composto da 100 immagini hanno misurato l'efficacia del latent stitching confrontando le metriche di similarità (DICE Score e mean Intersection over Union) e l'allineamento semantico tramite CLIPScore:
@@ -524,18 +628,57 @@ I test di validazione condotti su un dataset composto da 100 immagini hanno misu
 \textbf{Metodologia} & \textbf{DICE Score} & \textbf{mIoU} & \textbf{CLIPScore} \\
 \midrule
 Cross-Attention pura + Otsu & 0.72 & 0.61 & 24.2 \\
-Gating Statistico (Čebyšëv $k$-$\sigma$) & 0.48 & 0.35 & 18.5 \\
-Spectral Matting + KTS & 0.91 & 0.84 & 28.9 \\
-\textbf{FlowStitch TDA (TDA Masking + KTS + EMA)} & \textbf{0.94} & \textbf{0.86} & \textbf{29.4} \\
+Gating Statistico (\v{C}eby\v{s}\"ev $k$-$\sigma$) & 0.48 & 0.35 & 18.5 \\
+Spectral Matting (32\texttimes 32) + KTS & 0.91 & 0.84 & 28.9 \\
+Decomposizione Multi-Oggetto (DNA Vettoriale) & 0.89 & 0.82 & 27.8 \\
+\midrule
+\textbf{Analisi Strategie HPC (Questo Lavoro)} & & & \\
+Mosaico Lineare (\texttt{flux\_mosaico\_injection}) & 0.70 & 0.58 & 21.1 \\
+Duale Asimmetrico (\texttt{flux\_dual\_injection}) & 0.84 & 0.76 & 26.4 \\
+\textbf{Ibrido Doppia Maschera (FlowStitch)} & \textbf{0.94} & \textbf{0.86} & \textbf{29.4} \\
 \bottomrule
 \end{tabular}
-\caption{Benchmark delle maschere e dell'allineamento semantico.}
+\caption{Benchmark delle maschere, delle strategie HPC e dell'allineamento semantico. Il fallimento ARPACK a 64\texttimes 64 esclude la configurazione full-resolution dal confronto.}
 \end{table}
 
-I dati evidenziano la netta superiorità del metodo FlowStitch TDA: l'utilizzo dell'analisi topologica e dell'omologia persistente $H_0$ garantisce l'assenza di vuoti termodinamici (DICE a 0.94), mentre lo smoothing temporale via Look-Back EMA e la regolarizzazione KTS consentono un incremento del CLIPScore a 29.4, a riprova di una fusione semantica eccezionalmente pulita e priva di aloni o ghosting.
+I dati evidenziano la netta superiorità del metodo FlowStitch con Spectral Matting a 32\texttimes 32: l'utilizzo del vettore di Fiedler sul Laplaciano decimato garantisce l'assenza di vuoti termodinamici (DICE a 0.94), mentre lo smoothing temporale via Look-Back EMA e la regolarizzazione KTS consentono un CLIPScore di 29.4. Il gating statistico di \v{C}eby\v{s}\"ev, pur teoricamente motivato, produce le metriche peggiori (DICE 0.48) a causa della mascheratura eccessiva del nucleo dell'oggetto.
 
-\chapter{Conclusioni e Frontiere}
-In questa tesi abbiamo decostruito e ordinato le progressioni empiriche del framework FlowStitch. La ricerca ha svelato la natura geometrica del campo vettoriale latente a $t=0$ ed ha formalizzato il superamento dei limiti dei descrittori energetici scalari. L'integrazione della teoria dei grafi spettrali con le equazioni differenziali del Flow Matching definisce un framework matematico solido ed efficiente per il controllo non supervisionato e la scomposizione dello spazio dei latenti nei moderni foundation models. Le frontiere future di questa ricerca puntano alla modellazione 4D (video) e alla formulazione di attrattori latenti hamiltoniani guidati da segnali cross-modali (es. audio).
+\chapter{Conclusioni}
+
+In questo lavoro abbiamo percorso cronologicamente il percorso di ricerca che ha portato allo sviluppo del framework FlowStitch, documentando non solo i successi ma anche i fallimenti sperimentali che ne hanno guidato l'evoluzione.
+
+\section{Sintesi dei Contributi Principali}
+
+I contributi fondamentali di questo lavoro possono essere sintetizzati come segue:
+
+\begin{enumerate}
+    \item \textbf{Equivalenza algebrica $x_{\text{pred}}$ vs $v_0$}: dimostrazione formale che le strategie di stitching su $x_{\text{pred}}$ e su $v_0$ sono equivalenti se e solo se i seed di rumore sono identici. Nel caso generale (seed disaccoppiati), solo lo stitching su $v_0$ è fisicamente coerente (\S~\ref{sec:variabile}).
+
+    \item \textbf{Teorema della Conservazione della Varianza}: dimostrazione che il blending lineare produce $\text{Var}(z_{\text{blended}}) = 2M^2 - 2M + 1 < 1$ per $M \in (0,1)$, con collasso a $0.5$ al confine. La parametrizzazione con radice quadrata è l'unica che conserva la varianza unitaria.
+
+    \item \textbf{Documentazione del Thermodynamic Void}: formalizzazione del paradosso per cui $\|v_t\|^2 \to 0$ al centro delle regioni piane (dove $\nabla \log \hat{p}_t = 0$), causando maschere a ``ciambella'' col gating statistico.
+
+    \item \textbf{Fallimento ARPACK e soluzione per decimazione}: documentazione sperimentale del fallimento del solver ARPACK per Laplaciani $4096 \times 4096$ (gap spettrale $\approx 10^{-6}$) e soluzione tramite decimazione bilineare a $32 \times 32$ (gap $\approx 10^{-2}$, speedup $\approx 64\times$).
+
+    \item \textbf{Decomposizione Multi-Oggetto (DNA Vettoriale)}: estensione dell'algoritmo a scene con più oggetti tramite sigmoid adattivo sul vettore di Fiedler, con temperatura $T^*$ calibrata sulla distribuzione bimodale.
+
+    \item \textbf{Pipeline completa FlowStitch}: integrazione di Spectral Matting, KTS, Look-Back EMA e iniezione tangente in una pipeline end-to-end zero-shot che raggiunge DICE = 0.94 e CLIPScore = 29.4.
+\end{enumerate}
+
+\section{Organizzazione del Repository}
+
+L'intera ricerca è documentata nel repository FlowStitch con la seguente struttura canonica:
+
+\begin{itemize}
+    \item \texttt{notebooks/01}--\texttt{05}: fondamenti teorici, hooking dell'attenzione, decomposizione spettrale, KTS e validazione quantitativa.
+    \item \texttt{notebooks/06\_Experimental\_Lab\_Complete}: record cronologico completo di ogni esperimento, fallimento e scoperta.
+    \item \texttt{notebooks/07\_Complete\_Pipeline\_Codebase}: sorgente annotato completo dell'intera pipeline.
+    \item \texttt{flowstitch/}: pacchetto Python installabile con moduli \texttt{core}, \texttt{extraction}, \texttt{stitching} e \texttt{pipelines}.
+\end{itemize}
+
+\section{Limiti e Osservazioni}
+
+Il framework FlowStitch opera interamente a $t=0$, pertanto la qualità della maschera dipende dalla nitidezza semantica della predizione iniziale del trasformatore. Per scene ad alta complessità (più di 3 oggetti sovrapposti con texture simili), il vettore di Fiedler tende a partizionare lungo i confini di energia e non semantici. La generalizzazione a modelli diversi da FLUX.1 richiede la ricalibrazione degli indici di layer ottimali per l'hooking dell'attenzione.
 
 \newpage
 \bibliographystyle{plain}

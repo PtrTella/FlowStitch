@@ -13,8 +13,11 @@ logger = logging.getLogger(__name__)
 
 def run_latent_stitching(config: FlowStitchConfig, db_path: str):
     """
-    Unified Latent Stitching pipeline. Replaces flux_dual_injection, flux_dual_last, flux_mosaico_injection.
-    Supports mode: "mosaico", "dual", "full" (from config.stitching_mode)
+    Unified Latent Stitching pipeline.
+    Supports mode: "mosaico" or "dual" (from config.stitching_mode).
+    
+    Note: "full" mode was removed — it was identical to "dual".
+    See notebooks/02_Injection_Thermodynamics for the motivation.
     """
     logger.info(f"--- Latent Stitching [{config.stitching_mode}] ---")
     
@@ -28,7 +31,7 @@ def run_latent_stitching(config: FlowStitchConfig, db_path: str):
     x0_db = load_tensors(os.path.join(db_path, "x0_noise.pt"), map_location="cpu").to(device, dtype=config.dtype)
     
     # Gaussian Blur su A_target per "Dual" e "Full" modes per sfumare i bordi
-    if config.stitching_mode in ["dual", "full"]:
+    if config.stitching_mode == "dual":
         b, seq, c = A_target.shape
         h = w = int(seq ** 0.5)
         A_target_2d = A_target.view(b, c, h, w)
@@ -37,10 +40,10 @@ def run_latent_stitching(config: FlowStitchConfig, db_path: str):
         A_target_blurred = A_target_blurred / (max_val + 1e-8)
         A_target = A_target_blurred.view(b, seq, c)
         
-    A_fisica = (A_target > 0.1).to(config.dtype) if config.stitching_mode in ["dual", "full"] else A_target
+    A_fisica = (A_target > 0.1).to(config.dtype) if config.stitching_mode == "dual" else A_target
     
     # 2. Setup Modello e Hook Semantico
-    if config.stitching_mode in ["dual", "full"]:
+    if config.stitching_mode == "dual":
         logger.info("Iniezione del Custom Attention Processor (Semantic Grafting)...")
         pipe = inject_semantic_processors(pipe, A_target, injection_strength=config.injection_strength, target_blocks="single")
         
@@ -78,7 +81,7 @@ def run_latent_stitching(config: FlowStitchConfig, db_path: str):
             )
 
     # 4. Decodifica e Pulizia
-    if config.stitching_mode in ["dual", "full"]:
+    if config.stitching_mode == "dual":
         remove_semantic_processors(pipe)
         
     logger.info("Decodifica VAE (float32)...")

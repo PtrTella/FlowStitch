@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 import torch
 
 @dataclass
@@ -25,7 +25,7 @@ class FlowStitchConfig:
     gamma_kts: float = 5.0
     ema_decay: float = 0.3
     use_ema: bool = True
-    stitching_mode: str = "dual" # "mosaico", "dual", "full"
+    stitching_mode: str = "dual" # "mosaico" or "dual"
     
     def to_dict(self):
         return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}

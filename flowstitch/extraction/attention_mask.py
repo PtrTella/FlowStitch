@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 
 def extract_attention_mask(layer_10_attn: torch.Tensor, token_indices: list, normalize: bool = True) -> torch.Tensor:
     """

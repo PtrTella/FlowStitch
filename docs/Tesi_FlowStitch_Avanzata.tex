@@ -54,11 +54,11 @@
 \maketitle
 
 \begin{abstract}
-Questo lavoro di tesi documenta la ricerca teorica e l'implementazione sperimentale di \textbf{FlowStitch}, un framework innovativo per la segmentazione semantica zero-shot e il latent stitching all'interno di modelli generativi basati su Flow Matching multimodale (in particolare, l'architettura MMDiT di FLUX.1). L'elaborato è organizzato in sette notebook sperimentali (\texttt{01}--\texttt{07}) che tracciano un filo logico coerente dall'analisi topologica dello stato $t=0$ fino alla pipeline completa di produzione.
+Questo lavoro di tesi documenta la ricerca teorica e l'implementazione sperimentale di \textbf{FlowStitch}, un framework innovativo per la segmentazione semantica zero-shot e il latent stitching all'interno di modelli generativi basati su Flow Matching multimodale (in particolare, l'architettura MMDiT di FLUX.1). L'elaborato è organizzato in nove notebook sperimentali (\texttt{01}--\texttt{09}) che tracciano un filo logico coerente dall'analisi topologica dello stato $t=0$ fino alla pipeline completa di produzione e al benchmark comparativo.
 
 Vengono formalizzati matematicamente i fenomeni fisici emersi durante lo stress-test dei modelli generativi, tra cui il \textit{Ghosting Termodinamico} e il \textit{Vuoto Termodinamico} (Thermodynamic Void). Per ovviare a quest'ultimo paradosso energetico, viene introdotto lo Spectral Matting latente, calcolato tramite il vettore di Fiedler del Laplaciano normalizzato spettrale delle Key di attenzione, accoppiato a una diffusione markoviana guidata da sementi semantiche estratte tramite decomposizione a valori singolari (SVD).
 
-Documentiamo inoltre i fallimenti sperimentali fondamentali — in particolare il collasso di ARPACK per matrici $4096 \times 4096$ e il crollo della varianza nel blending lineare — e le soluzioni adottate. Il notebook \texttt{06\_Experimental\_Lab\_Complete} consolida cronologicamente ogni esperimento, fallimento e scoperta; il notebook \texttt{07\_Complete\_Pipeline\_Codebase} annota l'intero sorgente della pipeline di produzione. I risultati confermano l'efficacia del framework nell'eseguire editing e iniezioni non distruttive a complessità computazionale contenuta e idonea a contesti HPC.
+Il notebook \texttt{05\_Decoder\_Exploration} documenta l'esplorazione sistematica di sei decoder sperimentali, dal gating statistico di Čebyšëv alla diffusione spettrale su grafo di Markov. Il notebook \texttt{06\_Spectral\_Matting\_and\_TDA} consolida l'analisi spettrale, la TDA e il fallimento ARPACK. Il notebook \texttt{07\_Multi\_Object\_Decomposition} formalizza la decomposizione multi-oggetto (DNA Vettoriale). I notebook \texttt{08} e \texttt{09} dimostrano la pipeline completa integrata nel pacchetto \texttt{flowstitch/} e presentano il benchmark comparativo dei metodi. I risultati confermano l'efficacia del framework nell'eseguire editing e iniezioni non distruttive a complessità computazionale contenuta e idonea a contesti HPC.
 \end{abstract}
 
 \tableofcontents
@@ -571,7 +571,7 @@ In questo modo, per piccoli valori di $\alpha$, la variazione temporale della de
 
 \section{Il Fallimento di ARPACK e la Decimazione Spaziale}
 
-Uno degli esperimenti più rivelatori del percorso di ricerca è il fallimento completo del solver ARPACK sul Laplaciano a piena risoluzione $4096 \times 4096$. Documentato in dettaglio nel notebook \texttt{06\_Experimental\_Lab\_Complete} (\S 7), ARPACK (\textit{Arnoldi Package}) è l'algoritmo iterativo standard per la fattorizzazione spettrale sparsa di grandi matrici simmetriche. La sua convergenza dipende criticamente dall'esistenza di un \textit{gap spettrale} positivo $\Delta\lambda = \lambda_2 - \lambda_1 > 0$ tra il primo autovalore nullo (associato alla componente connessa) e il secondo (il valore di Fiedler).
+Uno degli esperimenti più rivelatori del percorso di ricerca è il fallimento completo del solver ARPACK sul Laplaciano a piena risoluzione $4096 \times 4096$. Documentato in dettaglio nel notebook \texttt{06\_Spectral\_Matting\_and\_TDA} (\S 6.5), ARPACK (\textit{Arnoldi Package}) è l'algoritmo iterativo standard per la fattorizzazione spettrale sparsa di grandi matrici simmetriche. La sua convergenza dipende criticamente dall'esistenza di un \textit{gap spettrale} positivo $\Delta\lambda = \lambda_2 - \lambda_1 > 0$ tra il primo autovalore nullo (associato alla componente connessa) e il secondo (il valore di Fiedler).
 
 Per il grafo di affinità coseno derivato dalle feature latenti di FLUX a $64 \times 64$, il gap spettrale effettivo risulta quasi nullo:
 \begin{equation}
@@ -670,10 +670,16 @@ I contributi fondamentali di questo lavoro possono essere sintetizzati come segu
 L'intera ricerca è documentata nel repository FlowStitch con la seguente struttura canonica:
 
 \begin{itemize}
-    \item \texttt{notebooks/01}--\texttt{05}: fondamenti teorici, hooking dell'attenzione, decomposizione spettrale, KTS e validazione quantitativa.
-    \item \texttt{notebooks/06\_Experimental\_Lab\_Complete}: record cronologico completo di ogni esperimento, fallimento e scoperta.
-    \item \texttt{notebooks/07\_Complete\_Pipeline\_Codebase}: sorgente annotato completo dell'intera pipeline.
-    \item \texttt{flowstitch/}: pacchetto Python installabile con moduli \texttt{core}, \texttt{extraction}, \texttt{stitching} e \texttt{pipelines}.
+    \item \texttt{notebooks/01\_Topological\_Analysis}: analisi topologica dello spazio latente, KPE, cross-attention.
+    \item \texttt{notebooks/02\_Injection\_Thermodynamics}: dimostrazione equivalenza $x_{\text{pred}}$ vs $v_0$, scelta della variabile.
+    \item \texttt{notebooks/03\_Hard\_Masking\_Failure}: fallimento delle hard mask, violazione Picard-Lindelöf.
+    \item \texttt{notebooks/04\_Continuous\_Energy\_Blending}: alpha matte continuo, ghosting termodinamico, conservazione varianza.
+    \item \texttt{notebooks/05\_Decoder\_Exploration}: esplorazione sistematica di 6 decoder (Chebyshev, Cosine, SVD, Spectral, GraphDiffusion, SvdSeeded).
+    \item \texttt{notebooks/06\_Spectral\_Matting\_and\_TDA}: vettore di Fiedler, TDA con Ripser, fallimento ARPACK e decimazione.
+    \item \texttt{notebooks/07\_Multi\_Object\_Decomposition}: decomposizione multi-oggetto, DNA Vettoriale, analisi ortogonalità.
+    \item \texttt{notebooks/08\_Complete\_Pipeline}: dimostrazione end-to-end della pipeline \texttt{flowstitch/} su dati reali.
+    \item \texttt{notebooks/09\_Summary\_and\_Benchmarks}: benchmark comparativo dei metodi con DICE, IoU e CLIPScore.
+    \item \texttt{flowstitch/}: pacchetto Python installabile con moduli \texttt{core}, \texttt{extraction} (incl. \texttt{decoders/} con 5 classi sperimentali e \texttt{multi\_object.py}), \texttt{stitching}, \texttt{evaluation} e \texttt{pipelines}.
 \end{itemize}
 
 \section{Limiti e Osservazioni}

@@ -56,7 +56,9 @@
 \begin{abstract}
 Questo lavoro di tesi documenta la ricerca teorica e l'implementazione sperimentale di \textbf{FlowStitch}, un framework innovativo per la segmentazione semantica zero-shot e il latent stitching all'interno di modelli generativi basati su Flow Matching multimodale (in particolare, l'architettura MMDiT di FLUX.1). L'elaborato è organizzato in nove notebook sperimentali (\texttt{01}--\texttt{09}) che tracciano un filo logico coerente dall'analisi topologica dello stato $t=0$ fino alla pipeline completa di produzione e al benchmark comparativo.
 
-Vengono formalizzati matematicamente i fenomeni fisici emersi durante lo stress-test dei modelli generativi, tra cui il \textit{Ghosting Termodinamico} e il \textit{Vuoto Termodinamico} (Thermodynamic Void). Per ovviare a quest'ultimo paradosso energetico, viene introdotto lo Spectral Matting latente, calcolato tramite il vettore di Fiedler del Laplaciano normalizzato spettrale delle Key di attenzione, accoppiato a una diffusione markoviana guidata da sementi semantiche estratte tramite decomposizione a valori singolari (SVD).
+Vengono formalizzati matematicamente i fenomeni fisici emersi durante lo stress-test dei modelli generativi, tra cui il \textit{Ghosting Termodinamico} e il \textit{Vuoto Termodinamico} (Thermodynamic Void). La tesi dimostra come il Vuoto Termodinamico rappresenti un ostacolo primario per la \textbf{Strada A} (Zero-Shot Segmentation analitica), superato mediante l'introduzione dello Spectral Matting latente e del vettore di Fiedler accoppiati a una diffusione markoviana guidata da sementi semantiche (SVD). 
+
+Tuttavia, l'elaborato culmina con un'epifania teorica: per l'obiettivo finale dell'iniezione generativa (\textbf{Strada B}, Latent Stitching), il Vuoto Termodinamico si rivela essere un \textbf{falso problema}. L'integrazione differenziale aggira il paradosso affidandosi alla mappa di Cross-Attention come attrattore fluido spaziale, delegando la chiusura dei bordi geometrici al motore di denoising stesso.
 
 Il notebook \texttt{05\_Decoder\_Exploration} documenta l'esplorazione sistematica di sei decoder sperimentali, dal gating statistico di Čebyšëv alla diffusione spettrale su grafo di Markov. Il notebook \texttt{06\_Spectral\_Matting\_and\_TDA} consolida l'analisi spettrale, la TDA e il fallimento ARPACK. Il notebook \texttt{07\_Multi\_Object\_Decomposition} formalizza la decomposizione multi-oggetto (DNA Vettoriale). I notebook \texttt{08} e \texttt{09} dimostrano la pipeline completa integrata nel pacchetto \texttt{flowstitch/} e presentano il benchmark comparativo dei metodi. I risultati confermano l'efficacia del framework nell'eseguire editing e iniezioni non distruttive a complessità computazionale contenuta e idonea a contesti HPC.
 \end{abstract}
@@ -340,7 +342,7 @@ Nel regime di campionamento tipico dei Rectified Flows ad alta velocità (es. in
 
 \section{Continuous Energy Blending}
 \section{\texorpdfstring{Lipschitz-Continuità e\\ Teorema di Picard-Lindelöf}{Lipschitz-Continuità e Teorema di Picard-Lindelöf}}
-Il quarto notebook (\texttt{04\_continuous\_}\allowbreak\texttt{energy\_}\allowbreak\texttt{blending.ipynb}) corregge il fallimento del ritaglio rigido poggiando sulla teoria della regolarizzazione differenziale. 
+Il quarto notebook (\texttt{04\_Continuous\_Energy\_Blending.ipynb}) corregge il fallimento del ritaglio rigido poggiando sulla teoria della regolarizzazione differenziale. 
 
 Per garantire che il campo vettoriale perturbato $v_{\text{stitch}}$ sia integrabile in modo stabile da qualsiasi solutore numerico, esso deve soddisfare le condizioni del **Teorema di Picard-Lindelöf**. Questo teorema stabilisce che un'equazione differenziale ordinaria ammette soluzione unica e continua se il suo campo vettoriale è lipschitziano. Formalmente, deve esistere una costante $L \ge 0$ tale che:
 \begin{equation}
@@ -376,7 +378,7 @@ Questo comportamento deriva dalla formulazione dinamica di Benamou-Brenier per i
 
 \section{Statistical Energy Gating}
 \section{La Dualità Energia-Densità}
-Il quinto notebook (\texttt{05\_statistical\_}\allowbreak\texttt{energy\_}\allowbreak\texttt{gating.ipynb}) introduce una solida base termodinamica per ripulire l'Alpha Matte dal rumore ergodico del background. Richiamando la teoria di *EnfoPath* \cite{enfopath2025}, si dimostra che la norma quadratica della velocità è proporzionale al gradiente negativo della densità di probabilità del manifold latente:
+Il quinto notebook (\texttt{05\_Decoder\_Exploration.ipynb}) introduce una solida base termodinamica per ripulire l'Alpha Matte dal rumore ergodico del background. Richiamando la teoria di *EnfoPath* \cite{enfopath2025}, si dimostra che la norma quadratica della velocità è proporzionale al gradiente negativo della densità di probabilità del manifold latente:
 \begin{equation}
     \|v_\theta(z_t, t)\|^2 \asymp -\nabla_z \log \hat{p}_t(z_t)
 \end{equation}
@@ -478,7 +480,7 @@ Questo processo permette all'inchiostro semantico di colare all'interno del nucl
 
 \chapter{Metodologia: Segmentazione Zero-Shot via Grafi e TDA}
 \section{Strada A: Spectral Matting sul Campo Vettoriale}
-Il sesto notebook (\texttt{06\_beyond\_}\allowbreak\texttt{thresholds.ipynb}) formalizza le due soluzioni definitive per superare le soglie globali energetiche. La prima (\textbf{Strada A}) è lo \textit{Spectral Matting} latente \cite{levin2008spectral}.
+Il sesto notebook (\texttt{06\_Spectral\_Matting\_and\_TDA.ipynb}) formalizza le due soluzioni definitive per superare le soglie globali energetiche. La prima (\textbf{Strada A}) è lo \textit{Spectral Matting} latente \cite{levin2008spectral}.
 
 Questo metodo astrae il campo di velocità $v_0$ in un grafo planare di affinità spaziale. Costruiamo la matrice di adiacenza $W$ di dimensioni $4096 \times 4096$. L'affinità $W_{ij}$ tra il pixel latente $i$ e il pixel $j$ è definita dalla similarità coseno dei loro vettori di velocità normalizzati, elevata alla terza potenza per sopprimere le basse frequenze ergodiche del background:
 \begin{equation}
@@ -545,6 +547,10 @@ Anziché ritagliare spazialmente il tensore, usiamo la mappa di cross-attention 
 
 Questa formulazione non introduce discontinuità di salto nel campo vettoriale, preservando la lipschitzianità del flusso $C^1$ ed evitando la nascita di artefatti visivi. L'azione dell'attenzione funge da deviatore gravitazionale morbido della traiettoria, delegando al solutore ODE di FLUX la risoluzione fine dei bordi netti durante i successivi passi di denoising.
 
+\subsection{L'Epifania Teorica: Il Falso Problema}
+Tutti gli sforzi immani condotti per la Strada A (SVD, Diffusione di Markov, Spectral Matting, TDA) avevano l'obiettivo di calcolare una \textit{maschera geometrica binaria perfetta} per superare il paradosso del Vuoto Termodinamico causato dal gating statistico.
+Ma per il Latent Stitching Generativo, questa necessità svanisce. Utilizzando l'attenzione grezza (che è piena al centro dell'oggetto) come parametro di blend nell'ODE, la fluidodinamica di FLUX guarisce autonomamente la struttura. Il Vuoto Termodinamico non è mai stato un problema per la pipeline di iniezione generativa (FlowStitch), ma unicamente un vincolo formale per i segmentatori booleani!
+
 \section{Ibridazione Finale e Kinetic Trajectory Shaping}
 La metodologia consolidata fonde la precisione spettrale sui bordi geometrici (Strada A) con il gating semantico (Strada B) per produrre la maschera di gating ibrido $M_{\text{hybrid}}$. 
 
@@ -608,7 +614,7 @@ La maschera risultante viene riportata alle dimensioni originali $64 \times 64$ 
 
 I notebook sperimentali hanno rivelato una limitazione fondamentale del binary Fiedler cut nel caso di scene con più oggetti sovrapposti: il vettore di Fiedler partiziona il grafo in esattamente due cluster (foreground/background), perdendo la struttura gerarchica delle componenti semantiche.
 
-Per gestire scene multi-oggetto, il notebook \texttt{06\_Experimental\_Lab\_Complete} (\S 5) implementa la \textit{Decomposizione Adattiva Sigmoidale} (\textbf{DNA Vettoriale}). Anziché tagliare al through-zero del vettore di Fiedler, viene applicata una funzione sigmoidale parametrica con temperatura $T$ adattiva:
+Per gestire scene multi-oggetto, il notebook \texttt{07\_Multi\_Object\_Decomposition} implementa la \textit{Decomposizione Adattiva Sigmoidale} (\textbf{DNA Vettoriale}). Anziché tagliare al through-zero del vettore di Fiedler, viene applicata una funzione sigmoidale parametrica con temperatura $T$ adattiva:
 \begin{equation}
     M_{\text{adaptive}}(\mathbf{e}_1) = \sigma\left(\frac{\mathbf{e}_1 - \mu_{\mathbf{e}_1}}{T \cdot \sigma_{\mathbf{e}_1}}\right)
 \end{equation}

@@ -13,9 +13,9 @@ class TestFlowStitchImports(unittest.TestCase):
 
     def test_stitching_imports(self):
         from flowstitch.stitching.kts import apply_kts
-        from flowstitch.stitching.ema_smoothing import AttentionEMA
+        from flowstitch.stitching.ema_smoothing import TrajectoryEMA
         self.assertTrue(callable(apply_kts))
-        self.assertTrue(callable(AttentionEMA))
+        self.assertTrue(callable(TrajectoryEMA))
 
     def test_evaluation_imports(self):
         from flowstitch.evaluation.metrics import dice_coefficient, iou_score

@@ -75,10 +75,17 @@ def compile_mask_for_scene(
 
     # Load attention maps (always needed)
     attn_target = load_tensors(
-        os.path.join(db_path, "attention_maps.pt"),
-        map_location="cpu",
+        os.path.join(db_path, "attention_maps.pt")
     )
-    layer_10 = attn_target["layer_10"]
+    # Find the highest-indexed layer key (prefer layer_10 if available)
+    layer_keys = [k for k in attn_target.keys() if k.startswith("layer_")]
+    if not layer_keys:
+        raise ValueError(f"No layer keys found in attention maps. Available keys: {list(attn_target.keys())}")
+    # Sort by layer index to get the deepest layer
+    layer_keys.sort(key=lambda k: int(k.split('_')[1]))
+    target_key = layer_keys[-1]  # Use deepest layer
+    logger.info(f"Using attention map key: '{target_key}'")
+    layer_10 = attn_target[target_key]
 
     # Basic attention mask (used by all methods as base or directly)
     A_target = extract_attention_mask(layer_10, token_indices, normalize=True)
@@ -91,20 +98,20 @@ def compile_mask_for_scene(
 
     elif method == "chebyshev":
         v0 = load_tensors(
-            os.path.join(db_path, "v0_velocity.pt"), map_location="cpu"
+            os.path.join(db_path, "v0_velocity.pt")
         )
         energy = torch.norm(v0, p=2, dim=-1, keepdim=True)
         A_target = compute_chebyshev_threshold(energy, k=chebyshev_k).to(torch.float32)
 
     elif method == "spectral":
         v0 = load_tensors(
-            os.path.join(db_path, "v0_velocity.pt"), map_location="cpu"
+            os.path.join(db_path, "v0_velocity.pt")
         )
         A_target = compute_fiedler_mask(v0, target_resolution=spectral_resolution).to(torch.float32)
 
     elif method == "hybrid":
         v0 = load_tensors(
-            os.path.join(db_path, "v0_velocity.pt"), map_location="cpu"
+            os.path.join(db_path, "v0_velocity.pt")
         )
         A_target = hybrid_semantic_decomposition(
             v0, A_target, target_resolution=spectral_resolution
@@ -112,7 +119,7 @@ def compile_mask_for_scene(
 
     elif method == "tda":
         v0 = load_tensors(
-            os.path.join(db_path, "v0_velocity.pt"), map_location="cpu"
+            os.path.join(db_path, "v0_velocity.pt")
         )
         A_target = extract_tda_mask(v0, A_target).to(torch.float32)
 

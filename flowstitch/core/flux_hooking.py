@@ -108,6 +108,14 @@ class FluxDataCapturer:
         self.is_capturing = False
 
     def _transformer_hook(self, module, args, kwargs, output):
+        """Post-forward hook on the transformer.
+        
+        NOTE: AttnProcessorWrapper captures attention maps DURING the forward pass,
+        while this hook fires AFTER. Both share self.step, but since AttnProcessors
+        execute before this hook increments step, the semantics are consistent only
+        when max_capture_step == 1. For multi-step capture, the processors see step N
+        while this hook also processes step N then increments to N+1.
+        """
         if self.is_capturing and self.step == 0:
             hidden_states = kwargs.get('hidden_states', args[0] if len(args) > 0 else None)
             if hidden_states is not None:

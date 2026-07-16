@@ -1,5 +1,5 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List
 import torch
 
 @dataclass
@@ -15,7 +15,7 @@ class FlowStitchConfig:
     output_root: str = "data/dataset_v1"
     seed: int = 42
     steps: int = 4
-    target_layers: List[int] = field(default_factory=lambda: [0, 10])
+    target_layers: list[int] = field(default_factory=lambda: [0, 10])
     
     # Stitching parameters
     ambient_prompt: str = "a crystal clear lake"

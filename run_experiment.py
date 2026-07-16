@@ -1,6 +1,16 @@
 import os
 import torch
 import logging
+import socket
+
+# --- HACK: Force IPv4 to bypass HPC cluster firewall (enable via FORCE_IPV4=1) ---
+if os.environ.get("FORCE_IPV4", "0") == "1":
+    old_getaddrinfo = socket.getaddrinfo
+    def new_getaddrinfo(*args, **kwargs):
+        res = old_getaddrinfo(*args, **kwargs)
+        return [r for r in res if r[0] == socket.AF_INET]
+    socket.getaddrinfo = new_getaddrinfo
+# ---------------------------------------------------------------------------------
 
 # Configurazione del logging per l'HPC
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")

@@ -16,6 +16,7 @@ e la soglia è adattiva (μ + σ dell'energia pre-filtrata).
 Validato su scene con cubo + sfera con verifica di ortogonalità
 tra maschere di oggetti diversi.
 """
+from __future__ import annotations
 import torch
 import logging
 

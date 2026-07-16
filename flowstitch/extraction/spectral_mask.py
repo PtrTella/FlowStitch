@@ -18,6 +18,7 @@ def compute_fiedler_mask(keys_img: torch.Tensor, target_resolution: int = 32) ->
     # Assuming keys_img shape: [1, seq_len, dim]
     b, seq_len, dim = keys_img_f32.shape
     h = w = int(seq_len ** 0.5)
+    assert h * w == seq_len, f"seq_len must be a perfect square, got {seq_len} (sqrt={seq_len**0.5})"
     
     # Reshape and downsample to avoid OOM
     keys_2d = keys_img_f32.view(b, h, w, dim).permute(0, 3, 1, 2)

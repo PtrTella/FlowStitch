@@ -25,7 +25,9 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "ripser",
-    "persim"
+    "persim",
+    "scipy",
+    "scikit-learn"
 ]
 
 [project.optional-dependencies]

@@ -1,6 +1,6 @@
 # FlowStitch: Un Framework per la Decomposizione Latente Non Supervisionata tramite Campi di Velocità e Analisi Spettrale dell'Attenzione
 
-**Autore:** Antigravity Research Lab (per PtrTella)  
+**Autore:** Pietro Tellarini  
 **Data:** 13 Maggio 2026  
 **Area di Ricerca:** Modelli Generativi, Flow Matching, Computer Vision, Trasporto Ottimale
 

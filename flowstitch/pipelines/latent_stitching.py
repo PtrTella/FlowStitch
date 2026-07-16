@@ -26,14 +26,15 @@ def run_latent_stitching(config: FlowStitchConfig, db_path: str):
     pipe.set_progress_bar_config(disable=True)
     
     # 1. Caricamento Dati
-    A_target = load_tensors(os.path.join(db_path, "A_target.pt"), map_location="cpu").to(device, dtype=config.dtype)
-    v0_db = load_tensors(os.path.join(db_path, "v0_velocity.pt"), map_location="cpu").to(device, dtype=config.dtype)
-    x0_db = load_tensors(os.path.join(db_path, "x0_noise.pt"), map_location="cpu").to(device, dtype=config.dtype)
+    A_target = load_tensors(os.path.join(db_path, "A_target.pt")).to(device, dtype=config.dtype)
+    v0_db = load_tensors(os.path.join(db_path, "v0_velocity.pt")).to(device, dtype=config.dtype)
+    x0_db = load_tensors(os.path.join(db_path, "x0_noise.pt")).to(device, dtype=config.dtype)
     
     # Gaussian Blur su A_target per "Dual" e "Full" modes per sfumare i bordi
     if config.stitching_mode == "dual":
         b, seq, c = A_target.shape
         h = w = int(seq ** 0.5)
+        assert h * w == seq, f"seq_len must be a perfect square, got {seq}"
         A_target_2d = A_target.view(b, c, h, w)
         A_target_blurred = TF.gaussian_blur(A_target_2d, kernel_size=[3, 3], sigma=[2.5, 2.5])
         max_val = A_target_blurred.max()
@@ -59,16 +60,18 @@ def run_latent_stitching(config: FlowStitchConfig, db_path: str):
         if config.stitching_mode == "mosaico":
             latents = latents_lake * (1.0 - A_fisica) + x0_db * A_fisica
         else:
-            latents = latents_lake * torch.sqrt(1.0 - A_fisica) + x0_db * torch.sqrt(A_fisica)
+            # NOTE: A_fisica is binary (thresholded), so sqrt would be a no-op.
+            # For spherical blending with continuous masks, use: sqrt(1-α)·x + sqrt(α)·y
+            latents = latents_lake * (1.0 - A_fisica) + x0_db * A_fisica
             
         logger.info("Integrazione Differenziale (ODE)...")
         pipe.scheduler.set_timesteps(config.steps, device=device)
         
         smoother = None
         if getattr(config, "use_ema", False):
-            from ..stitching.ema_smoothing import AttentionEMA
-            smoother = AttentionEMA(decay=config.ema_decay)
-            logger.info(f"Look-Back EMA attivato con decay={config.ema_decay}")
+            from ..stitching.ema_smoothing import TrajectoryEMA
+            smoother = TrajectoryEMA(decay=config.ema_decay)
+            logger.info(f"Trajectory EMA attivato con decay={config.ema_decay}")
         
         for t in pipe.scheduler.timesteps:
             latents = perform_ode_step(

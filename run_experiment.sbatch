@@ -12,6 +12,7 @@
 export HF_HOME="/scratch.hpc/pietro.tellarini2/huggingface_cache"
 export DIFFUSERS_NO_FLASH_ATTN=1
 export PYTHONUNBUFFERED=1
+export FORCE_IPV4=1
 
 # Creazione cartella log
 mkdir -p logs

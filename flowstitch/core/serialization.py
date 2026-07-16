@@ -2,7 +2,7 @@ import os
 import torch
 import safetensors.torch
 
-def load_tensors(path: str, map_location="cpu"):
+def load_tensors(path: str):
     """
     Safely loads tensors from either a .safetensors file or a legacy .pt file.
     If path has a specific extension, it also checks the alternative extension.
@@ -29,7 +29,7 @@ def load_tensors(path: str, map_location="cpu"):
         except Exception:
             continue
 
-    raise FileNotFoundError(f"Could not find or load safe tensor file at: {path}. Legacy pickle loading is disabled for security reasons.")
+    raise FileNotFoundError(f"Could not load tensor data from: {path}. Tried candidates: {candidates}. Only .safetensors format is supported (legacy .pt pickle loading is disabled for security).")
 
 def save_tensors(data, path: str):
     """
@@ -43,6 +43,10 @@ def save_tensors(data, path: str):
     if isinstance(data, torch.Tensor):
         payload = {"__single_tensor__": data.contiguous()}
     elif isinstance(data, dict):
+        skipped = [k for k, v in data.items() if not isinstance(v, torch.Tensor)]
+        if skipped:
+            import logging
+            logging.getLogger(__name__).warning(f"save_tensors: skipping non-tensor keys: {skipped}")
         payload = {k: v.contiguous() for k, v in data.items() if isinstance(v, torch.Tensor)}
     else:
         raise TypeError("data must be a torch.Tensor or a dictionary of torch.Tensors")

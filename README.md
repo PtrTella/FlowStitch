@@ -22,14 +22,16 @@ graph TD
 ## Structure
 
 - `flowstitch/`: Core python package
-  - `core/`: Config and hooking logic
-  - `extraction/`: Mask extraction (Attention, Spectral, Energy, Hybrid, TDA)
-  - `stitching/`: ODE Perturbation, KTS, EMA Smoothing
-  - `evaluation/`: DICE, IoU, CLIPScore metrics
-  - `pipelines/`: End-to-end execution scripts
-- `hpc_cluster/`: HPC Slurm scripts and entrypoints
-- `local_analysis/`: Jupyter notebooks for exploratory analysis
+  - `core/`: Config, hooking logic, serialization
+  - `extraction/`: Mask extraction (Attention, Spectral, Energy, Hybrid, TDA, Decoders)
+  - `stitching/`: ODE Perturbation, KTS, EMA Smoothing, Semantic Processor
+  - `evaluation/`: DICE, IoU, CLIPScore metrics and benchmark runner
+  - `pipelines/`: End-to-end execution (dataset generation, mask compilation, latent stitching)
+- `notebooks/`: Jupyter notebooks for exploratory analysis (9 notebooks)
 - `docs/`: LaTeX thesis and research documents
+- `tests/`: Unit tests
+- `run_experiment.py`: HPC experiment entrypoint
+- `run_experiment.sbatch`: SLURM batch script
 
 ## Setup
 

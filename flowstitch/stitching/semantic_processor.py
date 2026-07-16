@@ -38,6 +38,7 @@ class SemanticGraftingProcessor:
             blended_features = img_features * (1.0 - (self.A_target * self.injection_strength)) + \
                                protected_features * (self.A_target * self.injection_strength)
             
+            out_hidden_states = out_hidden_states.clone()
             out_hidden_states[:, :num_image_tokens, :] = blended_features
 
         return out_hidden_states

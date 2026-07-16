@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import json
 import torch
@@ -82,6 +83,7 @@ def generate_dataset(config: FlowStitchConfig, prompts: list[str]):
                 logger.info("Pulisco la VRAM e passo al prossimo prompt...")
                 
             finally:
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     logger.info("Generazione Dataset completata!")

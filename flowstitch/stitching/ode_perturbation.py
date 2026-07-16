@@ -12,6 +12,8 @@ def perform_ode_step(pipe, latents, t, ambient_pooled, ambient_embeds, ambient_t
     dtype = latents.dtype
     
     t_val = t.item() if torch.is_tensor(t) else float(t)
+    # FluxPipeline scheduler produces timesteps in [0, 1000]; the transformer
+    # expects normalized [0, 1] values (matching official FluxPipeline: timestep/1000)
     t_norm = t_val / 1000.0
     timestep_1d = torch.tensor([t_norm] * latents.shape[0], device=device, dtype=dtype)
     

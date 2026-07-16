@@ -22,9 +22,9 @@ def otsu_threshold(mask: torch.Tensor, bins: int = 256) -> torch.Tensor:
     mask_f32 = mask.to(torch.float32)
     m_flat = mask_f32.flatten()
     hist = torch.histc(m_flat, bins=bins, min=0.0, max=1.0)
-    total = hist.sum()
+    total = hist.sum().item()
     
-    sum_total = torch.dot(torch.arange(bins, dtype=torch.float32, device=mask.device), hist)
+    sum_total = torch.dot(torch.arange(bins, dtype=torch.float32, device=mask.device), hist).item()
     
     weight_b = 0.0
     sum_b = 0.0

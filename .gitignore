@@ -37,3 +37,4 @@ build/
 *.fdb_latexmk
 *.synctex.gz
 
+.vscode/*

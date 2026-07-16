@@ -1,22 +1,24 @@
 import os
-import torch
 import logging
 import socket
 
 # --- HACK: Force IPv4 to bypass HPC cluster firewall (enable via FORCE_IPV4=1) ---
 if os.environ.get("FORCE_IPV4", "0") == "1":
     old_getaddrinfo = socket.getaddrinfo
+
     def new_getaddrinfo(*args, **kwargs):
         res = old_getaddrinfo(*args, **kwargs)
         return [r for r in res if r[0] == socket.AF_INET]
+
     socket.getaddrinfo = new_getaddrinfo
 # ---------------------------------------------------------------------------------
 
 # Configurazione del logging per l'HPC
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
-from flowstitch.core.config import FlowStitchConfig
-from flowstitch.pipelines.latent_stitching import run_latent_stitching
+from flowstitch.core.config import FlowStitchConfig  # noqa: E402
+from flowstitch.pipelines.latent_stitching import run_latent_stitching  # noqa: E402
+from flowstitch.pipelines.mask_compilation import compile_mask_for_scene  # noqa: E402
 
 
 def main():
@@ -31,7 +33,14 @@ def main():
     # 2. Definisci il path da cui prelevare i latenti isolati dell'oggetto (es. la sfera)
     db_path = "data/dataset_v1/a_blue_sphere"
 
-    print(f"--- Avvio Latent Stitching Sperimentale su Nodo HPC ---")
+    print("--- Compilazione dinamica della Maschera (Metodo: hybrid) ---")
+    compile_mask_for_scene(
+        db_path=db_path,
+        word_to_isolate="sphere",  # Target da estrarre
+        method="hybrid",  # Metodo ibrido: Fiedler spaziale + Priore semantico
+    )
+
+    print("--- Avvio Latent Stitching Sperimentale su Nodo HPC ---")
     print(f"Ambiente Target: {config.ambient_prompt}")
     print(f"Concetto Inject: {db_path}")
     print(f"Modalita': {config.stitching_mode}")

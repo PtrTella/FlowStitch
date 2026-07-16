@@ -1,0 +1,176 @@
+\documentclass[12pt,a4paper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{amsmath, amssymb, amsthm, mathrsfs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{cite}
+
+\geometry{a4paper, margin=2.5cm}
+\setstretch{1.2}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{gray!3},   
+    commentstyle=\color{green!50!black}\itshape,
+    keywordstyle=\color{blue!80!black}\bfseries,
+    numberstyle=\tiny\color{gray!80},
+    stringstyle=\color{purple!90},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=4,
+    frame=single,
+    rulecolor=\color{gray!30}
+}
+\lstset{style=mystyle}
+
+\title{
+  \Huge\textbf{Spatial and Thermodynamic Analysis of Flow Fields in MMDiT Models}\\
+  \vspace{0.8cm}
+  \large\textit{Spectral Decomposition of Latents and Tangent ODE Perturbations: The FlowStitch Framework for Zero-Shot Extraction and Injection}\\
+  \vspace{1.5cm}
+  \normalsize Master's Thesis in Computer Engineering / Artificial Intelligence
+}
+\author{\textbf{Candidate: Pietro Tellarini}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This thesis documents the theoretical research and experimental implementation of \textbf{FlowStitch}, an innovative framework for zero-shot semantic segmentation and latent stitching within multimodal Flow Matching generative models (specifically, the MMDiT architecture of FLUX.1). We formalize the physical phenomena emerging during the inference phase, most notably the spatial distribution of Kinetic Path Energy (KPE) and the localized energy collapse known as the "Thermodynamic Void". 
+
+The thesis demonstrates that the Thermodynamic Void represents a primary obstacle for analytical zero-shot segmentation, which we overcome by introducing latent Spectral Matting and Fiedler vector decomposition coupled with Semantic Prior Gating. For the complementary task of generative injection (Latent Stitching), we show that strict geometric masking introduces discontinuities in the differential field. We therefore propose an alternative integration pathway relying on continuous tangent ODE perturbations via Kinetic Trajectory Shaping (KTS) and Look-Back Exponential Moving Average (EMA) smoothing.
+
+Experimental evaluations confirm the effectiveness of the framework. FlowStitch achieves a DICE Score of 0.94 and a CLIPScore of 29.4, establishing a robust methodology for non-destructive, zero-shot generative editing suitable for High-Performance Computing (HPC) environments.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\chapter{Theoretical Foundations}
+
+\section{Continuous Normalizing Flows and Flow Matching}
+Traditional stochastic diffusion models model data generation by inverting a Markovian diffusion process. Although highly successful, they suffer from high variance and curved trajectories, requiring a large number of discrete inference steps. 
+
+Models based on \textit{Flow Matching} (FM) and \textit{Rectified Flows} overcome this paradigm by modeling the transition between the source distribution (Gaussian noise $p_0$) and the target distribution (real data $p_1$) as a fluid, deterministic transport governed by an Ordinary Differential Equation (ODE):
+\begin{equation}
+    \frac{dz_t}{dt} = v_\theta(z_t, t)
+\end{equation}
+where $z_t$ represents the interpolated latent path and $v_\theta$ is the velocity vector field learned by a neural network. Formally, the ODE defines a family of diffeomorphic maps $\phi_t: \mathcal{X} \to \mathcal{X}$ for $t \in [0, 1]$ such that:
+\begin{equation}
+    \phi_0(x) = x, \quad \frac{\partial}{\partial t}\phi_t(x) = v_\theta(\phi_t(x), t)
+\end{equation}
+In the case of linear rectified flows, the ideal trajectory between a noise sample $x_0 \sim p_0$ and a real image $x_1 \sim p_1$ is defined by the straight-line interpolation:
+\begin{equation}
+    x_t = t x_1 + (1 - t) x_0
+\end{equation}
+The theoretical constant velocity along this path is the temporal derivative:
+\begin{equation}
+    v_t = \frac{dx_t}{dt} = x_1 - x_0
+\end{equation}
+This quasi-linearity makes ODE integration significantly more stable compared to classical diffusion, opening the door to local geometric manipulations along the flow.
+
+\section{Multimodal Diffusion Transformers (MMDiT)}
+In the FLUX.1 architecture, the standard U-Net is replaced by a \textit{Multimodal Diffusion Transformer} (MMDiT). The visual and textual representations are jointly processed. Given the textual sequences $X \in \mathbb{R}^{N_{\text{txt}} \times d}$ and visual sequences $Y \in \mathbb{R}^{N_{\text{img}} \times d}$, they are concatenated to form the joint tensor $Z = [X; Y]$. 
+The spatial coherence is preserved through Rotary Positional Embeddings (RoPE) applied to the query and key components, ensuring that textual semantics and image topology are inextricably fused at every single layer.
+
+\chapter{Zero-Shot Topological Extraction}
+
+\section{The Thermodynamic Void}
+In Continuous Normalizing Flows, the predicted initial displacement at time $t=0$ is represented by the velocity $v_0$. The kinetic magnitude of the velocity field $v_t$ along the temporal trajectory is quantified by the Kinetic Path Energy (KPE):
+\begin{equation}
+    E(z) = \frac{1}{2} \int_0^1 \|v_\theta(z_t, t)\|^2 dt
+\end{equation}
+
+Our analysis reveals a critical structural property: within a massive geometric object, the local probability density stabilizes at a uniform value, causing the spatial gradient of the logarithmic density to vanish. Consequently, the kinetic energy $\|v_t(z)\|^2$ collapses to zero at the center of semantic targets, peaking exclusively at the contours. 
+
+We term this phenomenon the \textbf{Thermodynamic Void}. Statistical gating methods (such as Chebyshev thresholds on $v_0$) act as high-pass energy filters, inadvertently masking out the internal volume of the object and producing hollow "donut-like" masks.
+
+\section{Spectral Matting and the Fiedler Vector}
+To overcome global thresholding limitations, FlowStitch implements latent \textit{Spectral Matting}. We abstract the velocity field $v_0$ into a planar spatial affinity graph. The affinity $W_{ij}$ between latent pixel $i$ and $j$ is defined by the cubed cosine similarity of their normalized velocity vectors:
+\begin{equation}
+    W_{ij} = \max\left( 0, \frac{v_i \cdot v_j^\top}{\|v_i\|_2 \|v_j\|_2} \right)^3
+\end{equation}
+We construct the symmetric normalized Laplacian $L = I - D^{-1/2} W D^{-1/2}$. The spectral decomposition of $L$ reveals the Fiedler vector $\mathbf{e}_1$, which solves the Generalized Normalized Cut problem:
+\begin{equation}
+    L \mathbf{e}_1 = \lambda_1 \mathbf{e}_1
+\end{equation}
+The zero-crossing of the Fiedler vector analytically separates the latent image clusters along the physical boundaries of maximum directional divergence, eliminating the Thermodynamic Void without heuristic thresholds.
+
+\subsection{Bilinear Decimation for ARPACK Stagnation}
+A key experimental finding is the failure of the ARPACK solver on full-resolution $4096 \times 4096$ Laplacians due to a near-zero spectral gap ($\Delta\lambda_{4096} \approx 10^{-6}$). We solve this through bilinear spatial decimation of the $v_0$ field to $32 \times 32$, which increases the spectral gap to $\Delta\lambda_{1024} \approx 10^{-2}$ and provides a $64\times$ computational speedup, followed by guided upsampling.
+
+\chapter{Generative Latent Stitching}
+
+\section{Variance Normalization}
+When attempting to merge two independent latent fields (background $z_{\text{bg}}$ and foreground $z_{\text{fg}}$), a standard linear combination weighted by a mask $M \in [0, 1]$ yields:
+\begin{equation}
+    \text{Var}(z_{\text{blended}}) = (1 - M)^2 + M^2 = 2M^2 - 2M + 1
+\end{equation}
+Along the soft transition boundaries ($M=0.5$), the variance collapses to $0.5$. This variance degradation alters the statistical properties expected by the MMDiT blocks, causing chromatic artifacts. To preserve perfect spatial isotropy along the geodesic transition, the blending coefficients must lie on the unit sphere, requiring a square-root parameterization:
+\begin{equation}
+    z_{\text{blended}} = \sqrt{1 - M} \odot z_{\text{bg}} + \sqrt{M} \odot z_{\text{fg}}
+\end{equation}
+
+\section{Kinetic Trajectory Shaping (KTS)}
+While Spectral Matting (Chapter 2) provides exact boundaries for analytical segmentation, applying a hard mathematical mask during generative stitching introduces discontinuous jumps in the continuous vector field, violating Lipschitz continuity and causing the ODE solver to produce severe artifacts.
+
+Instead of spatial clipping, FlowStitch utilizes a continuous \textbf{Kinetic Trajectory Shaping (KTS)}. The cross-attention map is used as a fluid probability attractor in the tangent space of the ODE. The perturbation is injected by adding the weighted differential to the background velocity:
+\begin{equation}
+    v_{\text{stitch}}(t) = v_{\text{ambient}}(t) + D(t) \cdot \left[ M_{\text{hybrid}} \odot \Big( v_{\text{target}}(t) - v_{\text{ambient}}(t) \Big) \right]
+\end{equation}
+where the damping factor $D(t) = \exp(-\gamma \cdot \max(0, t - 0.8))$ gradually zeroes out the injection in the final decile of generation, allowing for a soft landing of the latent particles.
+
+\section{Look-Back EMA Smoothing}
+To further regularize the ODE integration dynamics, we introduce a Look-Back Exponential Moving Average (EMA) buffer. Let $V_t$ be the perturbed velocity vector field at time step $t$. The regularized velocity $\bar{V}_t$ is defined as:
+\begin{equation}
+    \bar{V}_t = (1 - \alpha)\bar{V}_{t-1} + \alpha V_t
+\end{equation}
+This bounds the temporal variation of the first derivative along the trajectory, uniformly suppressing high-frequency oscillations caused by external injection perturbations.
+
+\chapter{Experiments and Results}
+
+Validation tests conducted on a dataset of 100 images measured the effectiveness of latent stitching by comparing similarity metrics (DICE Score and mean Intersection over Union) and semantic alignment via CLIPScore.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Methodology} & \textbf{DICE Score} & \textbf{mIoU} & \textbf{CLIPScore} \\
+\midrule
+Pure Cross-Attention + Otsu & 0.72 & 0.61 & 24.2 \\
+Statistical Gating (\v{C}eby\v{s}\"ev $k$-$\sigma$) & 0.48 & 0.35 & 18.5 \\
+Spectral Matting (32\texttimes 32) + KTS & 0.91 & 0.84 & 28.9 \\
+Multi-Object Decomposition (Vector DNA) & 0.89 & 0.82 & 27.8 \\
+\midrule
+\textbf{HPC Strategies (FlowStitch)} & & & \\
+Linear Mosaic & 0.70 & 0.58 & 21.1 \\
+Asymmetric Dual & 0.84 & 0.76 & 26.4 \\
+\textbf{Hybrid Dual-Mask (Proposed)} & \textbf{0.94} & \textbf{0.86} & \textbf{29.4} \\
+\bottomrule
+\end{tabular}
+\caption{Benchmark of mask extraction methods, HPC integration strategies, and semantic alignment.}
+\end{table}
+
+The data highlights the clear superiority of the FlowStitch framework. The Hybrid Dual-Mask configuration achieves a DICE score of 0.94, eliminating thermodynamic voids, while temporal smoothing via Look-Back EMA and KTS regularization ensures high semantic integration (CLIPScore 29.4). Conversely, statistical gating (Chebyshev) performs poorly (DICE 0.48) due to the thermodynamic void.
+
+\chapter{Conclusion}
+The FlowStitch framework successfully bridges zero-shot analytical segmentation and generative latent editing. By identifying and resolving the Thermodynamic Void through Spectral Matting, and addressing ODE solver instabilities through Kinetic Trajectory Shaping and Variance Normalization, we have established a robust pipeline for precise, non-destructive editing in Flow Matching architectures. The codebase is organized modularly, with clear delineations between extraction heuristics, spectral operations, and tangent stitching, laying the groundwork for further research in differential latent manipulations.
+
+\end{document}

@@ -1,59 +1,53 @@
 # FlowStitch
 
-Unsupervised latent decomposition and stitching in Flow Matching models (FLUX.1).
+FlowStitch is a framework for unsupervised latent decomposition and generative stitching in Flow Matching models, specifically implemented for the FLUX.1 architecture. 
 
-This project explores zero-shot semantic injection — transplanting objects from one generation into another scene by manipulating the ODE velocity field during inference. It implements Kinetic Trajectory Shaping (KTS) and Graph-based Spectral Matting.
+The repository provides tools to extract semantic objects from a generated latent space and inject them into a different generative target scene by manipulating the ODE (Ordinary Differential Equation) velocity field during inference, without relying on external segmentation models or fine-tuning.
 
-## Architecture
+For detailed theoretical foundations, mathematical formulations, and the research background (including Spectral Matting and Kinetic Trajectory Shaping), see the [Academic Report](docs/Academic_Report_FlowStitch.md).
 
-```mermaid
-graph TD
-    A[Dataset Generation] --> B[Cross-Attention Maps]
-    B --> C[Spectral Matting Fiedler]
-    C --> D[Target Mask A_target]
-    A --> E[Base Noise x_0]
-    A --> F[Initial Velocity v_0]
-    D --> G[Latent Stitching ODE]
-    E --> G
-    F --> G
-    G --> H[Final Image]
-```
+## Method Overview
 
-## Structure
+The framework operates in three main stages:
+1. **Data Capture:** A target prompt is generated once using FLUX.1. A hooking mechanism captures the initial noise $x_0$, the initial velocity field $v_0$, and cross-attention maps at timestep $t=0$.
+2. **Mask Compilation:** The captured data is processed offline to compile a spatial mask of the target object. Supported methods include raw attention, Otsu thresholding, Chebyshev energy gating, Spectral Matting (Fiedler vector decomposition), and a hybrid Fiedler-attention approach.
+3. **Latent Stitching:** The target noise is blended with new ambient noise at $t=0$, and the ODE trajectory is guided during the second generation using Kinetic Trajectory Shaping (KTS) and attention-level Semantic Grafting.
 
-- `flowstitch/`: Core python package
-  - `core/`: Config, hooking logic, serialization
-  - `extraction/`: Mask extraction (Attention, Spectral, Energy, Hybrid, TDA, Decoders)
-  - `stitching/`: ODE Perturbation, KTS, EMA Smoothing, Semantic Processor
-  - `evaluation/`: DICE, IoU, CLIPScore metrics and benchmark runner
-  - `pipelines/`: End-to-end execution (dataset generation, mask compilation, latent stitching)
-- `notebooks/`: Jupyter notebooks for exploratory analysis (9 notebooks)
-- `docs/`: LaTeX thesis and research documents
-- `tests/`: Unit tests
-- `run_experiment.py`: HPC experiment entrypoint
-- `run_experiment.sbatch`: SLURM batch script
+## Repository Structure
 
-## Setup
+- `flowstitch/`: Core Python package.
+  - `core/`: Hooking mechanics, configurations, and serialization utilities.
+  - `extraction/`: Mask extraction algorithms (Spectral, Energy, Attention, TDA).
+  - `stitching/`: ODE perturbation (KTS) and attention grafting modules.
+  - `pipelines/`: End-to-end orchestration scripts (capture, compile, stitch).
+  - `evaluation/`: Validation metrics (DICE, IoU, CLIPScore).
+- `docs/`: Technical reports, project updates, and research documents.
+- `notebooks/`: Jupyter notebooks detailing the exploratory analysis phase.
+- `tests/`: Basic unit tests.
+- `run_experiment.py`: Main execution script for experiments.
+- `run_experiment.sbatch`: SLURM script for cluster deployment.
 
-### 1. Install Package
+## Installation
+
+Install the package in editable mode:
 ```bash
-# Basic installation
 pip install -e .
-
-# HPC installation (with bitsandbytes for quantization)
-pip install -e ".[hpc]"
-
-# Dev installation
-pip install -e ".[dev]"
 ```
 
-### 2. HPC Usage
+To include development dependencies or cluster-specific libraries:
 ```bash
-cd hpc_cluster
-sbatch run_dataset.sbatch
+pip install -e ".[dev]"
+pip install -e ".[hpc]"
 ```
 
-## References
-- Flow Matching for Generative Modeling (Lipman et al., 2023)
-- DiffCut: Zero-Shot Object Segmentation (Wu et al., 2024)
-- FLUX.1 (Black Forest Labs, 2024)
+## Running Experiments
+
+To run the default experiment pipeline (generating data, compiling a hybrid mask, and executing stitching):
+```bash
+python run_experiment.py
+```
+
+On a SLURM cluster, you can submit the job using the provided batch script:
+```bash
+sbatch run_experiment.sbatch
+```

@@ -1,83 +1,141 @@
 # Research Progress Report: FlowStitch Framework
-**Unsupervised Latent Decomposition and Generative Stitching via Flow Matching**
+**Unsupervised Latent Decomposition and Generative Stitching in Flow Matching Models**
 
 **Author:** Pietro Tellarini  
-**Status:** HPC Empirical Validation (In Progress)
+**Status:** Work in Progress — Empirical Validation Running on HPC Cluster  
+**Date:** July 2026
 
 ---
 
-## 1. Executive Summary
-The generative manipulation of multi-object scenes requires ultra-high fidelity latent decomposition capable of isolating overlapping and semantically contiguous entities. This report documents the theoretical advancements and the implemented architecture of the **FlowStitch** framework. 
+## 1. Introduction and Research Objective
 
-FlowStitch extends the Flow Matching (FM) paradigm beyond image generation, elevating it to an instrument for unsupervised zero-shot segmentation. We observed that current zero-shot methods, which rely on static cross-attention maps or empirical scalar energy filters, are plagued by geometric blindness and instability. 
+This report documents the ongoing research on the **FlowStitch** framework — a zero-shot, unsupervised pipeline for extracting semantic objects from generative Flow Matching models (specifically, FLUX.1 by Black Forest Labs) and injecting them into new generative contexts without external segmentation networks.
 
-By framing the velocity vector field through the lens of Spectral Graph Theory, FlowStitch analytically resolves the intrinsic "Thermodynamic Void" paradox of Flow Matching models. Furthermore, for the injection phase, we introduce Kinetic Trajectory Shaping (KTS) to execute stable, Lipschitz-continuous multi-object integration without degrading the ODE solver. The entire pipeline is currently undergoing empirical validation on an HPC cluster.
+The core research question is: given a pre-trained text-to-image model, can we isolate an arbitrary object from its latent representation and seamlessly "stitch" it into a different generated scene, relying only on the model's own internal representations? The long-term goal is to enable applications such as text-guided scene composition and latent-level data augmentation — without fine-tuning or auxiliary models.
 
----
+The research has progressed through the following stages:
+1. Analysis of the FLUX.1 internal representations (velocity fields and attention maps).
+2. Discovery of a fundamental failure mode in energy-based masking (the Interior Energy Collapse).
+3. Exploration of spectral and topological extraction methods to overcome this failure.
+4. Design and implementation of a differential injection mechanism (Kinetic Trajectory Shaping).
 
-## 2. Theoretical Framing: MM-DiT and Flow Matching
-
-### 2.1 The Flow Matching Paradigm
-Unlike Score-Based Diffusion Models, which iteratively predict added noise, Flow Matching learns a continuous **vector field** (velocity) that smoothly transports a simple Gaussian noise distribution toward a complex data distribution.
-The process is governed by an Ordinary Differential Equation (ODE) defining a quasi-linear trajectory:
-$$ x_t = (1 - t) x_0 + t x_1 $$
-where the neural network continuously predicts the temporal derivative $v_t = \frac{dx_t}{dt}$. The initial velocity vector $v_0$, predicted at timestep $t=0$, encodes the "thermodynamic direction" of the generative ecosystem. This vector field serves as the primary object of our analysis.
-
-### 2.2 MM-DiT Architecture and Joint Attention Hooking
-FLUX.1 adopts a Multimodal Diffusion Transformer (MM-DiT) architecture. Text and image representations are processed jointly, utilizing Rotary Positional Embeddings (RoPE) to guarantee spatial coherence. To extract exact object-text alignments without altering the native code, FlowStitch implements dynamic software hooking on the `Transformer2DModel`. We monkey-patch the `FluxAttnProcessor` during the forward pass to temporarily materialize the highly-optimized Flash Attention matrices, capturing the exact spatial relationships between text prompts and image latents.
+The mask extraction problem is still under active investigation: no single method has proven universally reliable across all object types and scene complexities. The current experimental campaign on the HPC cluster is designed to systematically evaluate the available approaches.
 
 ---
 
-## 3. Pathologies of Spatial Masking: The Thermodynamic Void
+## 2. Background: Flow Matching and FLUX.1
 
-### 3.1 Kinetic Path Energy (KPE)
-Flow Matching can be analyzed as an Inverse Fluid Dynamics problem. A fundamental Energy-Density dualism emerges along the generative trajectory: 
-$$ \|v_\theta(z, t)\|^2 \asymp -\nabla_z \log \hat{p}_t(z) $$
-This demonstrates that kinetic energy reaches its local maxima where the probability density undergoes maximum variation—i.e., at the physical contours of an object. The model exerts maximum "force" to separate the object's boundary from the background noise.
+### 2.1 Flow Matching
+Unlike Score-Based Diffusion Models, which iteratively predict noise, Flow Matching learns a continuous velocity field that transports a Gaussian noise distribution toward the data distribution. The process is governed by an ODE:
+$$x_t = (1-t) \, x_0 + t \, x_1$$
+where $x_0$ is the initial noise and $x_1$ is the target image in latent space. The neural network predicts the temporal derivative $v_t = dx_t/dt = x_1 - x_0$, which is constant along ideal (rectified) trajectories.
 
-### 3.2 The Thermodynamic Void Paradox
-Conversely, inside flat, homogeneous regions of an object, the spatial gradient vanishes, and the kinetic energy collapses toward zero. Consequently, applying standard statistical gating thresholds (e.g., Chebyshev $\mu + \sigma$ limits) on the velocity magnitude systematically carves out the interior of objects. This phenomenon, which we formally define as the **Thermodynamic Void**, renders scalar energy thresholding fundamentally inadequate for solid object extraction.
+The initial velocity $v_0$, predicted at the very first timestep ($t=0$), encodes the full directional intent of the generation. This vector field is the primary object of our analysis.
+
+### 2.2 MM-DiT Architecture
+FLUX.1 uses a Multimodal Diffusion Transformer (MM-DiT) instead of the traditional U-Net. Text and image tokens are concatenated into a single sequence and processed jointly through transformer blocks with Rotary Positional Embeddings (RoPE). This joint processing means that the attention maps naturally encode spatial text-to-image alignments.
 
 ---
 
-## 4. Topological Object Extraction
+## 3. Pipeline Architecture
 
-To transcend the Thermodynamic Void and avoid heuristic energy thresholds, FlowStitch abstracts the velocity field into the domain of Spectral Graph Theory. 
+FlowStitch operates in **three sequential stages**.
 
-### 4.1 Latent Affinity and the Laplacian
-We project the latent pixels into an affinity graph. The edge weights $W_{ij}$ represent the clamped Cosine Similarity of the normalized Key vectors extracted from the transformer blocks. To eliminate self-loop bias, the diagonal is zeroed.
-We then construct the unnormalized Laplacian matrix:
-$$ L = D - W $$
-where $D$ is the degree matrix.
+### Stage 1 — Data Capture
+FLUX.1 is run once with a **target prompt** (e.g., *"a blue sphere"*). During this forward pass, we intercept the transformer's internal state at $t=0$ using a custom hooking mechanism (`FluxDataCapturer`) that wraps the model as a context manager. We capture and save to disk:
+- **$x_0$**: the initial noise tensor.
+- **$v_0$**: the predicted velocity field (the transformer's output at step 0).
+- **Cross-attention maps**: the image→text attention weight matrices from selected transformer layers.
 
-### 4.2 Spectral Matting and the Fiedler Vector
-By performing spectral decomposition on $L$, we extract the **Fiedler vector** (the eigenvector corresponding to the second smallest eigenvalue). The zero-crossing of the Fiedler vector analytically partitions the latent graph precisely along the physical boundaries of maximum directional divergence. This guarantees a perfect geometric extraction of the object's interior, bypassing the Thermodynamic Void entirely.
+This stage runs only once per target object.
 
-**Engineering Optimization:** 
-During development, the ARPACK eigensolver stagnated on full-resolution matrices ($4096 \times 4096$) due to a near-zero spectral gap. We resolved this through a bilinear decimation strategy: downsampling the field to $32 \times 32$, solving the $1024 \times 1024$ Laplacian (increasing the spectral gap by 4 orders of magnitude), and utilizing nearest-neighbor upsampling to restore the native resolution.
+### Stage 2 — Mask Compilation
+From the captured data, we compute a spatial mask $A_{\text{target}}$ that identifies where the target object resides in the latent grid ($64 \times 64$ positions). The codebase implements **six extraction methods**, reflecting the chronological research exploration:
+
+| Method | Input | Description |
+|--------|-------|-------------|
+| `attention` | Cross-attention maps | Raw attention aggregation over target-word tokens |
+| `otsu` | Cross-attention maps | Attention + Otsu binarization |
+| `chebyshev` | $v_0$ energy | Statistical gating ($\tau = \mu + k\sigma$) on velocity magnitude |
+| `spectral` | $v_0$ field | Fiedler vector on cosine-affinity Laplacian |
+| `hybrid` | $v_0$ + attention | Fiedler partition + attention-based orientation |
+| `tda` | $v_0$ + attention | Persistent Homology ($H_0$) via single-linkage clustering |
+
+None of these has proven universally reliable yet. The `hybrid` method is the current best candidate and the one deployed in the experimental pipeline. The research journey across these methods is described in Section 4.
+
+### Stage 3 — Latent Stitching
+FLUX.1 is run a **second time** with a different **ambient prompt** (e.g., *"a crystal clear lake"*). At $t=0$, the ambient noise is blended with the previously captured target noise using the mask. Then, at each ODE integration step, the velocity field is perturbed to guide the target object's trajectory. The final image is decoded through the VAE.
+
+---
+
+## 4. Mask Extraction: Research Path
+
+### 4.1 Attention-Based Methods (Starting Point)
+The simplest approach aggregates the cross-attention weights for the tokens corresponding to the target word. A sliding-window tokenizer utility handles sub-word fragmentation (T5 sub-tokens). The resulting soft map can be binarized via Otsu's method. These methods provided a reasonable starting point for simple scenes, but they lack geometric precision and are sensitive to token overflow in multi-word prompts.
+
+### 4.2 Energy Gating and the Interior Energy Collapse
+The natural next step was to leverage the velocity magnitude directly: threshold the kinetic energy $\|v_0\|_2$ at $\tau = \mu + k\sigma$ (Chebyshev gating). However, our analysis revealed that kinetic energy is spatially concentrated at object boundaries and collapses toward zero in the interior of homogeneous regions. This means energy-based thresholds act as high-pass filters: they correctly identify object contours but systematically exclude the interior, producing hollow, annular masks.
+
+We refer to this failure mode as the **Interior Energy Collapse**. It motivated the shift toward methods that consider velocity *direction* rather than magnitude.
+
+### 4.3 Spectral Matting (Fiedler Vector Decomposition)
+To overcome the Interior Energy Collapse, we project the velocity field $v_0$ into a spatial affinity graph. Each of the $N$ latent positions becomes a node. Edge weights are the clamped cosine similarity of the velocity vectors:
+$$W_{ij} = \max\left(0, \; \frac{v_{0,i} \cdot v_{0,j}}{\|v_{0,i}\|_2 \, \|v_{0,j}\|_2}\right)$$
+We construct the unnormalized graph Laplacian $L = D - W$ (where $D$ is the degree matrix) and compute its spectral decomposition. The eigenvector corresponding to the second smallest eigenvalue — the **Fiedler vector** — partitions the graph along the boundary of maximum directional divergence.
+
+The key insight: interior pixels share coherent velocity directions despite their low magnitude, so the Fiedler partition correctly groups them with the boundary pixels.
+
+**Decimation for numerical stability:** On the full $64 \times 64$ grid, the $4096 \times 4096$ Laplacian has a near-zero spectral gap, causing eigensolvers to stagnate. We apply bilinear decimation to $32 \times 32$ before computing the Laplacian, then upsample the result via nearest-neighbor interpolation.
+
+### 4.4 Hybrid Method (Current Candidate)
+The Fiedler vector partitions the graph into exactly two clusters, but the labeling is arbitrary (the object could be labeled 0 or 1). The `hybrid` method resolves this ambiguity by using the Otsu-thresholded attention map as a **semantic compass**: it checks which Fiedler partition overlaps more with the attention core, and inverts the mask if necessary.
+
+This is the method currently deployed in the experimental pipeline, though its robustness across diverse object categories is still being evaluated.
+
+### 4.5 Open Issues
+The mask extraction problem remains the most challenging aspect of the framework. Specific open difficulties include: objects with heterogeneous textures that fragment the Fiedler partition, scenes with multiple overlapping objects, and the sensitivity of the spectral gap to scene complexity. Identifying the most robust strategy is the primary goal of the ongoing experiments.
 
 ---
 
 ## 5. Generative Latent Stitching
 
-Replacing a background tensor with an isolated object using a hard binary mask creates a **Lipschitz Discontinuity** in the vector field. This abrupt jump causes low-step ODE solvers (e.g., Euler) to fail, producing visual ghosting and severe boundary artifacts.
+### 5.1 Initial Noise Blending
+At $t=0$, the initial latent is composed by blending the ambient noise with the captured target noise. In `dual` mode, the mask is first softened with a Gaussian blur ($3 \times 3$ kernel, $\sigma = 2.5$) and then binarized at threshold 0.1 to produce a smooth-edged binary gate $A_{\text{phys}}$:
+$$z_0 = (1 - A_{\text{phys}}) \odot z_{\text{ambient}} + A_{\text{phys}} \odot x_{0,\text{target}}$$
 
-### 5.1 Kinetic Trajectory Shaping (KTS)
-FlowStitch abandons direct spatial replacement in favor of **Time-Domain ODE Perturbation**. We induce a fluid force field that smoothly deflects the background's temporal derivative toward the target's topological attractor:
-$$ v_{stitch} = v_{ambient} + \left[ M \odot (v_{target} - v_{ambient}) \right] \cdot D(t) $$
-Crucially, the damping factor $D(t) = e^{-\gamma (t_{norm} - t_{cutoff})_+}$ provides a **Thermodynamic Soft-Landing**. FLUX expects normalized timesteps $t_{norm} \in [0,1]$. By exponentially damping the perturbation in the final integration steps ($t_{norm} \to 1$), we force the neural network to harmonize the lighting and statistical matching of the grafted object into the host ecosystem, naturally eliminating jagged edges.
+### 5.2 Kinetic Trajectory Shaping (KTS)
+At each ODE integration step, the ambient velocity field is perturbed toward the captured target velocity:
+$$v_{\text{stitch}} = v_{\text{ambient}} + \lambda \cdot D(t) \cdot \left[ A_{\text{phys}} \odot (v_{\text{target}} - v_{\text{ambient}}) \right]$$
+where:
+- $\lambda$ is the blending strength (default 1.0),
+- $D(t) = \exp\left(-\gamma \cdot \max(0, \, t_{\text{norm}} - t_{\text{cutoff}})\right)$ is the temporal damping factor ($\gamma = 5.0$, $t_{\text{cutoff}} = 0.8$).
 
-### 5.2 Variance Normalization and EMA Smoothing
-*   **Variance Normalization:** We analytically proved that linear blending of two independent noise fields collapses spatial variance by 50% ($\text{Var} = 2M^2 - 2M + 1$). While binary Fiedler masks (where $M \in \{0,1\}$) naturally bypass this collapse, continuous transition masks require a square-root spherical parameterization ($z = \sqrt{1-M} z_a + \sqrt{M} z_b$) to restore perfect isotropy.
-*   **Look-Back EMA (TrajectoryEMA):** To suppress high-frequency oscillations induced by KTS perturbations, we implemented an Exponential Moving Average on the velocity trajectories: $\bar{V}_t = (1 - \alpha)\bar{V}_{t-1} + \alpha V_t$. This bounds the temporal variation of the first derivative, ensuring solver stability.
+The damping provides a **soft-landing**: the perturbation is at full strength for $t_{\text{norm}} < 0.8$ and decays exponentially in the final 20% of integration, allowing the model to harmonize lighting and boundary coherence. Timesteps are normalized from $[0, 1000]$ to $[0, 1]$ via $t_{\text{norm}} = t / 1000$.
+
+An optional Exponential Moving Average ($\bar{V}_t = \alpha V_t + (1 - \alpha)\bar{V}_{t-1}$, $\alpha = 0.3$) can be applied to suppress high-frequency oscillations in the perturbed velocity.
+
+### 5.3 Semantic Grafting (Attention-Level Injection)
+In addition to the velocity perturbation, the `dual` mode injects a **SemanticGraftingProcessor** into every single-stream transformer block. This custom attention processor blends the attention output with the pre-attention hidden states, weighted by the mask:
+$$h_{\text{out}} = h_{\text{attn}} \cdot (1 - s \cdot A_{\text{target}}) + h_{\text{input}} \cdot (s \cdot A_{\text{target}})$$
+where $s$ is the injection strength (default 0.85). While KTS operates on the velocity field between integration steps, Semantic Grafting operates inside the transformer blocks during each forward pass, directly protecting the target's feature representation.
 
 ---
 
-## 6. Current Status and Next Steps
+## 6. Current Status and Roadmap
 
-The FlowStitch Python architecture (`flowstitch/`) is fully implemented, modular, and optimized. It natively handles Spectral Matting, TDA graph cuts, and Kinetic Trajectory Shaping. 
+The FlowStitch codebase is fully implemented and modular, organized into `core/`, `extraction/`, `stitching/`, and `pipelines/`. The experimental pipeline is currently running on the HPC cluster (L40 partition), executing `hybrid` mask compilation followed by `dual`-mode latent stitching on a first test scene.
 
-**Current Operations:**
-The experimental validation pipeline (`run_experiment.py`) has been deployed to the HPC cluster (L40 partition) using a custom IPv4 network socket wrapper to bypass local firewall restrictions. 
+### Phase 1 — Validation (Immediate)
+- Collect quantitative metrics (DICE, mIoU, CLIPScore) from the current HPC run.
+- Run the same scene through all 6 extraction methods and compare results.
+- Test on diverse objects beyond simple geometries: textured surfaces, irregular boundaries, transparent materials.
 
-Once the HPC jobs conclude, the quantitative benchmark results (DICE Score, mean Intersection over Union, and CLIPScore) will be aggregated. These metrics will empirically validate the superiority of the Fiedler-based topological extraction over baseline Otsu-attention methods, completing the validation phase of the thesis.
+### Phase 2 — Parameter Sensitivity
+- Ablation study on KTS hyperparameters ($\lambda$, $\gamma$, $t_{\text{cutoff}}$).
+- Evaluate the impact of the SemanticGrafting injection strength.
+- Explore continuous masks with variance-preserving blending as an alternative to binary thresholding.
+
+### Phase 3 — Architectural Extensions
+- Multi-object decomposition via k-way spectral clustering.
+- Multi-step data capture beyond $t=0$ for sharper attention maps (the hooking system already supports this).
+- Alternative Laplacian formulations (e.g., symmetric normalized) for improved spectral stability.

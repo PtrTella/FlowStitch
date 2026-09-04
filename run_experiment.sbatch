@@ -8,17 +8,25 @@
 #SBATCH --error=/scratch.hpc/pietro.tellarini2/FlowStitch/logs/stitching_%j.err
 #SBATCH --chdir=/scratch.hpc/pietro.tellarini2/FlowStitch
 
-# Variabili d'ambiente per il cluster
+# Variabili d'ambiente per il cluster (TUTTO reindirizzato su scratch)
 export HF_HOME="/scratch.hpc/pietro.tellarini2/huggingface_cache"
+export HF_HUB_CACHE="/scratch.hpc/pietro.tellarini2/huggingface_cache/hub"
 export DIFFUSERS_NO_FLASH_ATTN=1
 export PYTHONUNBUFFERED=1
 export FORCE_IPV4=1
 
-# Creazione cartella log
+# Caricamento credenziali protette da .env (mai tracciato in git)
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
+
+# Creazione cartella log e output
 mkdir -p logs
 mkdir -p outputs/experiment_cluster
 
-# Attivazione Ambiente (assicurati che .venv o .venv_hpc esista sul nodo)
+# Attivazione Ambiente virtuale
 source .venv_hpc/bin/activate
 
 # Lancio dello script

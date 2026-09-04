@@ -7,7 +7,7 @@ name = "flowstitch"
 version = "0.1.0"
 description = "Unsupervised latent decomposition and stitching in Flow Matching models (FLUX.1)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 license = {text = "MIT"}
 authors = [
   {name = "Pietro Tellarini"}
@@ -20,24 +20,37 @@ dependencies = [
     "torchvision>=0.19.1",
     "sentencepiece",
     "protobuf",
-    "safetensors",
+    "safetensors>=0.4.5",
     "numpy",
+    "scipy",
+    "scikit-learn",
     "matplotlib",
     "seaborn",
     "ripser",
     "persim",
-    "scipy",
-    "scikit-learn"
 ]
 
 [project.optional-dependencies]
-dev = [
+local = [
     "pytest",
     "jupyter",
-    "ipykernel"
+    "ipykernel",
 ]
-hpc = [
-    "bitsandbytes"
+cluster = [
+    "bitsandbytes>=0.43.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu118", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cu118", marker = "sys_platform == 'linux'" },
 ]
 
 [tool.setuptools.packages.find]

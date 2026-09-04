@@ -37,4 +37,6 @@ build/
 *.fdb_latexmk
 *.synctex.gz
 
+# IDE
 .vscode/*
+.gemini/*

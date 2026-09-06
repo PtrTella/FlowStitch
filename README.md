@@ -52,16 +52,25 @@ Per mantenere il repository ordinato e sicuro:
 ## Come Eseguire gli Esperimenti
 
 ### 1. Esecuzione su Cluster SLURM (Giano - GPU L40)
-Lancia la pipeline completa (compilazione maschera ibrida in-place + iniezione ODE con KTS):
+Lancia l'orchestratore `scripts/main.py` direttamente tramite il runner SLURM:
 ```bash
-sbatch run_experiment.sbatch
+# Esecuzione completa (default: esegue tutti e 3 gli esperimenti con 1 solo caricamento VRAM)
+sbatch run.sbatch
+
+# Oppure esecuzione rapida di uno specifico esperimento:
+sbatch run.sbatch routing     # Solo Spatial Routing (0.50x su lago con riflessi)
+sbatch run.sbatch ablation    # Solo Ablation Study (Hard Cut vs Soft Aura)
+sbatch run.sbatch shapes      # Solo Invarianza Geometrica (Cubo sul lago)
 ```
 Controlla lo stato del job e segui i log in diretta:
 ```bash
 squeue -u $USER
 tail -f logs/stitching_*.out
 ```
-L'immagine combinata finale verrà salvata in `outputs/experiment_cluster/stitching_dual.png`.
+I risultati degli esperimenti verranno salvati in `outputs/experiment_cluster/`:
+* `exp1_hard_mosaico.png` vs `exp1_continuous_aura.png` (Ablation Study: dimostra l'eliminazione dei quadrettoni)
+* `exp2_spatial_routed_sphere.png` (Spatial Routing: sfera proporzionata sul lago con riflessi)
+* `exp3_geometric_cube_routed.png` (Invarianza topologica: cubo rosso con spigoli vivi sul lago)
 
 ### 2. Esecuzione e Studio su Mac (Offline)
 Sul Mac puoi analizzare i dati e visualizzare l'intero percorso teorico senza bisogno di GPU pesanti aprendo il master notebook della ricerca:
@@ -75,17 +84,21 @@ jupyter notebook notebooks/PhD_Research_Theoretical_Journey.ipynb
 
 ```text
 FlowStitch/
-├── flowstitch/              # Pacchetto Python modulare
-│   ├── core/                # Hooking MM-DiT, configurazioni, serializzazione safetensors
-│   ├── extraction/          # Algoritmi maschere (Spectral/DiffCut, TDA H0, Energy Gating)
-│   ├── stitching/           # Perturbazione ODE (KTS) e Look-Back EMA
-│   ├── pipelines/           # Orchestrazione (dataset_generation, mask_compilation, latent_stitching)
-│   └── evaluation/          # Metriche quantitative (DICE, IoU, CLIPScore)
-├── data/dataset_v1/         # Semantic Cache (tensori x0, v0, attention_maps in safetensors)
-├── notebooks/               # Notebook teorici di ricerca per la tesi
-├── docs/                    # Tesi LaTeX e Academic Report
-├── run_experiment.py        # Entrypoint Python dell'esperimento
-├── run_experiment.sbatch    # Script SLURM per nodo GPU L40
-├── pyproject.toml           # Configurazione pacchetto ed extras (local / cluster)
-└── .env                     # Token segreti (HF_TOKEN) mai committati in git
+├── flowstitch/                       # Pacchetto Python modulare
+│   ├── core/                         # Hooking MM-DiT, configurazioni, serializzazione safetensors
+│   ├── extraction/                   # Algoritmi maschere (Spectral/DiffCut, TDA H0, Energy Gating)
+│   ├── stitching/                    # Perturbazione ODE (KTS) e Look-Back EMA
+│   ├── pipelines/                    # Orchestrazione (dataset_generation, mask_compilation, latent_stitching)
+│   └── evaluation/                   # Metriche quantitative (DICE, IoU, CLIPScore)
+├── data/dataset_v1/                  # Semantic Cache (tensori x0, v0, attention_maps in safetensors)
+├── notebooks/                        # Notebook teorici di ricerca per la tesi
+├── docs/                             # Tesi LaTeX e Academic Report
+├── scripts/                          # Script operativi Python
+│   ├── exp1_ablation_aura.py         # Script atomico: Hard vs Soft Aura
+│   ├── exp2_spatial_routing.py       # Script atomico: Spatial Routing
+│   ├── exp3_geometric_invariance.py  # Script atomico: Invarianza Poliedrica (Cubo)
+│   └── main.py                       # Orchestratore master (esegue tutti e 3)
+├── run.sbatch                        # Runner SLURM generalizzato per GPU L40
+├── pyproject.toml                    # Configurazione pacchetto ed extras (local / cluster)
+└── .env                              # Token segreti (HF_TOKEN) mai committati in git
 ```

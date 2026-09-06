@@ -24,10 +24,29 @@ fi
 
 # Creazione cartella log e output
 mkdir -p logs
-mkdir -p outputs/experiment_cluster
+mkdir -p outputs/cluster_matrix
 
 # Attivazione Ambiente virtuale
 source .venv_hpc/bin/activate
 
-# Lancio dello script
-python run_experiment.py
+# Esecuzione diretta dello script Python passato come argomento
+# Default: scripts/run_cluster_matrix.py
+SCRIPT_TO_RUN="${1:-scripts/run_cluster_matrix.py}"
+shift $(( $# > 0 ? 1 : 0 ))
+
+echo "=== FlowStitch SLURM Job ==="
+echo "Script:     $SCRIPT_TO_RUN"
+echo "Argomenti:  $*"
+echo "Node:       $(hostname)"
+echo "GPU:        $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
+echo "============================"
+
+# Controllo esistenza file
+if [ ! -f "$SCRIPT_TO_RUN" ]; then
+    echo "[ERRORE] Script non trovato: $SCRIPT_TO_RUN"
+    exit 1
+fi
+
+python "$SCRIPT_TO_RUN" "$@"
+
+

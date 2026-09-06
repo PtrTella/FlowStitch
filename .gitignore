@@ -5,7 +5,8 @@ data/
 *.png
 !test_flux_2080_success.png
 
-# Logs
+# Logs & Outputs
+outputs/
 **/logs/
 *.out
 *.err

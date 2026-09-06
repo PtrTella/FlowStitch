@@ -4,7 +4,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def perform_ode_step(pipe, latents, t, ambient_pooled, ambient_embeds, ambient_txt_ids, latent_image_ids, A_target, v0_target, lambda_v0, kts_t_cutoff=0.8, kts_gamma=5.0, mode="dual", smoother=None):
+def perform_ode_step(
+    pipe,
+    latents,
+    t,
+    ambient_pooled,
+    ambient_embeds,
+    ambient_txt_ids,
+    latent_image_ids,
+    A_target,
+    v0_target,
+    lambda_v0,
+    kts_t_cutoff=0.5,
+    kts_gamma=4.0,
+    mode="dual",
+    damping_mode="kts",
+    smoother=None,
+):
     """
     Esegue un passo di integrazione ODE applicando KTS e perturbazione se richiesto.
     """
@@ -38,7 +54,8 @@ def perform_ode_step(pipe, latents, t, ambient_pooled, ambient_embeds, ambient_t
             t_norm=t_norm,
             lambda_val=lambda_v0,
             t_cutoff=kts_t_cutoff,
-            gamma=kts_gamma
+            gamma=kts_gamma,
+            damping_mode=damping_mode,
         )
         if smoother is not None:
             v_stitch = smoother.update(v_stitch)
